@@ -320,14 +320,33 @@ def convert_book(book_info, log=None):
         if log:
             log.info(f"KFX Comic: Extracting images from {source_fmt}...")
 
+        epub_path = source_path
+        if source_fmt in ("MOBI", "AZW", "AZW3"):
+            # Convert to EPUB first using Calibre's ebook-convert
+            if log:
+                log.info(f"KFX Comic: Converting {source_fmt} to EPUB...")
+            epub_path = os.path.join(tmp_dir, Path(source_path).stem + ".epub")
+            calibre_debug = _find_calibre_debug()
+            convert_bin = str(Path(calibre_debug).parent / "ebook-convert")
+            if not os.path.isfile(convert_bin):
+                convert_bin = shutil.which("ebook-convert")
+            if not convert_bin:
+                raise FileNotFoundError("ebook-convert not found")
+            result = subprocess.run(
+                [convert_bin, source_path, epub_path],
+                capture_output=True, text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to convert {source_fmt} to EPUB")
+            source_fmt = "EPUB"
+
         if source_fmt == "EPUB":
-            # Use metadata from EPUB if book_info doesn't have full info
-            epub_meta = _extract_metadata_from_epub(source_path)
+            epub_meta = _extract_metadata_from_epub(epub_path)
             if not title or title == "Unknown":
                 title = epub_meta["title"]
             if not author:
                 author = epub_meta["author"]
-            image_count = _extract_images_from_epub(source_path, image_dir)
+            image_count = _extract_images_from_epub(epub_path, image_dir)
         elif source_fmt == "CBZ":
             image_count = _extract_images_from_cbz(source_path, image_dir)
         else:

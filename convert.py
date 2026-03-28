@@ -281,26 +281,58 @@ def run_kfx_conversion(kpf_path: str, kfx_path: str) -> None:
         raise RuntimeError(f"KFX output not found: {kfx_path}")
 
 
-def convert_epub_to_kfx(epub_path: str, output_dir: str) -> None:
+SUPPORTED_FORMATS = (".epub", ".mobi", ".azw", ".azw3")
+
+
+def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
+    """Convert MOBI/AZW to EPUB if needed. Returns path to EPUB file."""
+    ext = Path(input_path).suffix.lower()
+    if ext == ".epub":
+        return input_path
+
+    calibre_convert = find_calibre_debug()
+    if not calibre_convert:
+        raise FileNotFoundError("calibre-debug not found")
+
+    # Use ebook-convert (same directory as calibre-debug)
+    convert_bin = str(Path(calibre_convert).parent / "ebook-convert")
+    if not os.path.isfile(convert_bin):
+        convert_bin = shutil.which("ebook-convert")
+    if not convert_bin:
+        raise FileNotFoundError("ebook-convert not found")
+
+    epub_path = os.path.join(tmp_dir, Path(input_path).stem + ".epub")
+    cmd = [convert_bin, input_path, epub_path]
+    print(f"    Converting {ext} to EPUB...")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to convert {ext} to EPUB: {result.stderr}")
+    return epub_path
+
+
+def convert_to_kfx(input_path: str, output_dir: str) -> None:
     """
-    Full pipeline: EPUB -> extract images -> KPF -> KFX.
+    Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
     Args:
-        epub_path: Path to the source manga EPUB file.
+        input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3).
         output_dir: Directory where the final KFX file will be placed.
     """
-    epub_name = Path(epub_path).stem
-    kfx_output = os.path.join(output_dir, f"{epub_name}.kfx")
+    input_name = Path(input_path).stem
+    kfx_output = os.path.join(output_dir, f"{input_name}.kfx")
 
     print(f"\n{'='*60}")
-    print(f"Processing: {epub_name}")
+    print(f"Processing: {input_name}")
     print(f"Output: {kfx_output}")
     print(f"{'='*60}")
 
-    if not os.path.isfile(epub_path):
-        raise FileNotFoundError(f"EPUB file not found: {epub_path}")
+    if not os.path.isfile(input_path):
+        raise FileNotFoundError(f"File not found: {input_path}")
 
     with tempfile.TemporaryDirectory(prefix="kindle-comic-") as tmp_dir:
+        # Convert to EPUB if needed
+        epub_path = convert_to_epub_if_needed(input_path, tmp_dir)
+
         image_dir = os.path.join(tmp_dir, "images")
         os.makedirs(image_dir)
 
@@ -312,11 +344,11 @@ def convert_epub_to_kfx(epub_path: str, output_dir: str) -> None:
             print(f"    Author: {metadata['author']}")
         image_count = extract_images(epub_path, image_dir)
         if image_count == 0:
-            raise RuntimeError("No images found in EPUB file")
+            raise RuntimeError("No images found in file")
         print(f"    Extracted {image_count} images")
 
         # Step 2: Generate KPF
-        kpf_path = os.path.join(tmp_dir, f"{epub_name}.kpf")
+        kpf_path = os.path.join(tmp_dir, f"{input_name}.kpf")
         print(f"\n[2/3] Generating KPF...")
         run_kpf_generation(image_dir, kpf_path,
                            title=metadata["title"], author=metadata["author"])
@@ -334,7 +366,7 @@ def convert_epub_to_kfx(epub_path: str, output_dir: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert manga EPUB files to KFX format for Kindle devices."
+        description="Convert manga/comic files to KFX format for Kindle devices."
     )
     parser.add_argument(
         "--output", "-o",
@@ -342,10 +374,10 @@ def main() -> None:
         help="Output directory for KFX files (default: current directory)",
     )
     parser.add_argument(
-        "epub_files",
+        "input_files",
         nargs="+",
-        metavar="file.epub",
-        help="One or more EPUB files to convert",
+        metavar="file",
+        help="One or more EPUB/MOBI/AZW/AZW3 files to convert",
     )
 
     args = parser.parse_args()
@@ -359,12 +391,17 @@ def main() -> None:
     success_count = 0
     fail_count = 0
 
-    for epub_file in args.epub_files:
+    for input_file in args.input_files:
+        ext = Path(input_file).suffix.lower()
+        if ext not in SUPPORTED_FORMATS:
+            print(f"Skipping {input_file}: unsupported format '{ext}'")
+            fail_count += 1
+            continue
         try:
-            convert_epub_to_kfx(epub_file, args.output)
+            convert_to_kfx(input_file, args.output)
             success_count += 1
         except Exception as e:
-            print(f"\nError processing {epub_file}: {e}")
+            print(f"\nError processing {input_file}: {e}")
             fail_count += 1
 
     total = success_count + fail_count

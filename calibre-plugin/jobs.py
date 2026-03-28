@@ -40,15 +40,15 @@ def start_conversion(gui):
         mi = db.get_metadata(book_id)
         formats = db.formats(book_id)
 
-        # Find a suitable source format (prefer EPUB, then CBZ)
+        # Find a suitable source format (prefer EPUB, then others)
         source_fmt = None
-        for fmt in ("EPUB", "CBZ"):
+        for fmt in ("EPUB", "MOBI", "AZW", "AZW3", "CBZ"):
             if fmt in formats:
                 source_fmt = fmt
                 break
 
         if source_fmt is None:
-            skipped.append(f"{mi.title} (no EPUB/CBZ format)")
+            skipped.append(f"{mi.title} (no supported format)")
             continue
 
         # Get the path to the source file
@@ -77,7 +77,7 @@ def start_conversion(gui):
         warning_dialog(
             gui,
             "Some books skipped",
-            "The following books were skipped (no EPUB/CBZ format):",
+            "The following books were skipped (no supported format):",
             det_msg="\n".join(skipped),
             show=True,
         )

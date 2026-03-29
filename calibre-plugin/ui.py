@@ -58,12 +58,14 @@ class KFXComicAction(InterfaceAction):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
         prefs["reading_direction"] = direction
+        prefs.commit()
         self._update_checks()
 
     def _set_language(self, language):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
         prefs["language"] = language
+        prefs.commit()
         self._update_checks()
 
     def _update_checks(self):

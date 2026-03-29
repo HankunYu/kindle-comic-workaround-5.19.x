@@ -237,7 +237,8 @@ def extract_images(epub_path: str, output_dir: str) -> int:
 
 
 def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
-                       author: str = "", language: str = "ja") -> None:
+                       author: str = "", reading_direction: str = "rtl",
+                       language: str = "ja") -> None:
     """Generate KPF from images using the custom KPF generator."""
     image_paths = sorted([
         os.path.join(image_dir, f) for f in os.listdir(image_dir)
@@ -250,7 +251,7 @@ def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
         output_path=kpf_path,
         title=title,
         author=author,
-        reading_direction="rtl",
+        reading_direction=reading_direction,
         language=language,
     )
 
@@ -310,13 +311,15 @@ def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
     return epub_path
 
 
-def convert_to_kfx(input_path: str, output_dir: str) -> None:
+def convert_to_kfx(input_path: str, output_dir: str,
+                   reading_direction: str = "rtl") -> None:
     """
     Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
     Args:
         input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3).
         output_dir: Directory where the final KFX file will be placed.
+        reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
     """
     input_name = Path(input_path).stem
     kfx_output = os.path.join(output_dir, f"{input_name}.kfx")
@@ -351,7 +354,8 @@ def convert_to_kfx(input_path: str, output_dir: str) -> None:
         kpf_path = os.path.join(tmp_dir, f"{input_name}.kpf")
         print(f"\n[2/3] Generating KPF...")
         run_kpf_generation(image_dir, kpf_path,
-                           title=metadata["title"], author=metadata["author"])
+                           title=metadata["title"], author=metadata["author"],
+                           reading_direction=reading_direction)
         kpf_size = os.path.getsize(kpf_path) / (1024 * 1024)
         print(f"    KPF: {kpf_size:.1f} MB")
 
@@ -372,6 +376,12 @@ def main() -> None:
         "--output", "-o",
         default=".",
         help="Output directory for KFX files (default: current directory)",
+    )
+    parser.add_argument(
+        "--direction",
+        choices=["rtl", "ltr"],
+        default="rtl",
+        help="Reading direction: rtl (manga) or ltr (comic) (default: rtl)",
     )
     parser.add_argument(
         "input_files",
@@ -398,7 +408,7 @@ def main() -> None:
             fail_count += 1
             continue
         try:
-            convert_to_kfx(input_file, args.output)
+            convert_to_kfx(input_file, args.output, args.direction)
             success_count += 1
         except Exception as e:
             print(f"\nError processing {input_file}: {e}")

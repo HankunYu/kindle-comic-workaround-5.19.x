@@ -30,30 +30,26 @@ NS_DC = "http://purl.org/dc/elements/1.1/"
 
 
 def _find_calibre_debug():
-    """Locate the calibre-debug executable on the current platform."""
-    if sys.platform == "darwin":
-        candidates = [
-            "/Applications/calibre.app/Contents/MacOS/calibre-debug",
-        ]
-    elif sys.platform == "win32":
-        candidates = [
-            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"),
-                         "Calibre2", "calibre-debug.exe"),
-            os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
-                         "Calibre2", "calibre-debug.exe"),
-        ]
+    """Locate the calibre-debug executable. Uses Calibre's own path when running as a plugin."""
+    # When running inside Calibre, we can derive the path from sys.executable
+    calibre_dir = os.path.dirname(sys.executable)
+    if sys.platform == "win32":
+        candidate = os.path.join(calibre_dir, "calibre-debug.exe")
+    elif sys.platform == "darwin":
+        candidate = os.path.join(calibre_dir, "calibre-debug")
     else:
-        # Linux
-        candidates = [
-            "/usr/bin/calibre-debug",
-            "/usr/local/bin/calibre-debug",
-        ]
+        candidate = os.path.join(calibre_dir, "calibre-debug")
 
-    for path in candidates:
-        if os.path.isfile(path):
-            return path
+    if os.path.isfile(candidate):
+        return candidate
 
-    # Fall back to PATH lookup
+    # Fallback: try well-known paths
+    if sys.platform == "darwin":
+        fallback = "/Applications/calibre.app/Contents/MacOS/calibre-debug"
+        if os.path.isfile(fallback):
+            return fallback
+
+    # Fallback: PATH lookup
     found = shutil.which("calibre-debug")
     if found:
         return found
@@ -327,7 +323,8 @@ def convert_book(book_info, log=None):
                 log.info(f"KFX Comic: Converting {source_fmt} to EPUB...")
             epub_path = os.path.join(tmp_dir, Path(source_path).stem + ".epub")
             calibre_debug = _find_calibre_debug()
-            convert_bin = str(Path(calibre_debug).parent / "ebook-convert")
+            exe = ".exe" if sys.platform == "win32" else ""
+            convert_bin = str(Path(calibre_debug).parent / f"ebook-convert{exe}")
             if not os.path.isfile(convert_bin):
                 convert_bin = shutil.which("ebook-convert")
             if not convert_bin:

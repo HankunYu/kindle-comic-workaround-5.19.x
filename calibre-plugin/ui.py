@@ -36,7 +36,17 @@ class KFXComicAction(InterfaceAction):
         self._ltr_action.setCheckable(True)
         self._ltr_action.triggered.connect(lambda: self._set_direction("ltr"))
 
-        self._update_direction_check()
+        # Language submenu
+        from calibre_plugins.kfx_comic_output.config import LANGUAGES
+        self._lang_menu = self._menu.addMenu("Language")
+        self._lang_actions = {}
+        for key, label in LANGUAGES.items():
+            action = self._lang_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, k=key: self._set_language(k))
+            self._lang_actions[key] = action
+
+        self._update_checks()
         self.qaction.setMenu(self._menu)
 
     def _convert_selected(self):
@@ -48,14 +58,23 @@ class KFXComicAction(InterfaceAction):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
         prefs["reading_direction"] = direction
-        self._update_direction_check()
+        self._update_checks()
 
-    def _update_direction_check(self):
+    def _set_language(self, language):
+        from calibre_plugins.kfx_comic_output.config import get_prefs
+        prefs = get_prefs()
+        prefs["language"] = language
+        self._update_checks()
+
+    def _update_checks(self):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
         is_rtl = prefs["reading_direction"] == "rtl"
         self._rtl_action.setChecked(is_rtl)
         self._ltr_action.setChecked(not is_rtl)
+        current_lang = prefs["language"]
+        for key, action in self._lang_actions.items():
+            action.setChecked(key == current_lang)
 
     def location_selected(self, loc):
         pass

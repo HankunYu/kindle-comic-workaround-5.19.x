@@ -4,6 +4,14 @@ PREFS_NAMESPACE = "KFXComicOutputPlugin"
 
 DEFAULTS = {
     "reading_direction": "rtl",
+    "language": "zh",
+}
+
+LANGUAGES = {
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "ko": "Korean",
+    "en": "English",
 }
 
 

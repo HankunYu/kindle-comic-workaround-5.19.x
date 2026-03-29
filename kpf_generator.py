@@ -515,11 +515,12 @@ def _build_document_data(section_ids: list[str], resource_list_aux_id: str,
         $169: [{$178: $351, $170: [section_refs...]}]
     }
     """
-    # Kindle Create always uses RTL symbols in document_data for comics,
-    # regardless of reading direction. The actual direction is controlled
-    # by book_reading_direction in book.kcb.
-    page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
-    binding_sym = SYM_RIGHT_TO_LEFT_BINDING
+    if reading_direction == "rtl":
+        page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
+        binding_sym = SYM_RIGHT_TO_LEFT_BINDING
+    else:
+        page_dir_sym = SYM_LEFT_TO_RIGHT_PAGE
+        binding_sym = SYM_LEFT_TO_RIGHT_BINDING
 
     section_refs = [ion_eid_ref(sid) for sid in section_ids]
 

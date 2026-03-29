@@ -219,7 +219,8 @@ SYM_BLOCK = 323               # $323 (enum value)
 SYM_FIT_BOTH = 324            # $324 (enum value)
 SYM_FIXED_LAYOUT = 326        # $326 (enum value)
 SYM_DEFAULT = 351             # $351 (enum value)
-SYM_FIXED_LAYOUT_MODE = 375   # $375 (enum value)
+SYM_FIXED_LAYOUT_MODE_RTL = 375  # $375 (enum value, RTL layout)
+SYM_FIXED_LAYOUT_MODE_LTR = 376  # $376 (enum value, LTR layout)
 SYM_ABSOLUTE = 377            # $377 (enum value)
 SYM_IMAGE_WIDTH = 422         # $422
 SYM_IMAGE_HEIGHT = 423        # $423
@@ -515,12 +516,14 @@ def _build_document_data(section_ids: list[str], resource_list_aux_id: str,
         $169: [{$178: $351, $170: [section_refs...]}]
     }
     """
+    # Kindle Create always uses RTL symbols for page_dir and binding,
+    # and controls LTR/RTL via the layout mode symbol ($375 vs $376).
+    page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
+    binding_sym = SYM_RIGHT_TO_LEFT_BINDING
     if reading_direction == "rtl":
-        page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
-        binding_sym = SYM_RIGHT_TO_LEFT_BINDING
+        layout_mode_sym = SYM_FIXED_LAYOUT_MODE_RTL
     else:
-        page_dir_sym = SYM_LEFT_TO_RIGHT_PAGE
-        binding_sym = SYM_LEFT_TO_RIGHT_BINDING
+        layout_mode_sym = SYM_FIXED_LAYOUT_MODE_LTR
 
     section_refs = [ion_eid_ref(sid) for sid in section_ids]
 
@@ -537,7 +540,7 @@ def _build_document_data(section_ids: list[str], resource_list_aux_id: str,
         (SYM_FORMAT_VERSION, ion_float64(16.0)),
         (SYM_PAGE_PROGRESSION_DIR, ion_symbol(page_dir_sym)),
         (SYM_SYS_MAX_ID, ion_int(max_eid)),
-        (SYM_LAYOUT, ion_symbol(SYM_FIXED_LAYOUT_MODE)),
+        (SYM_LAYOUT, ion_symbol(layout_mode_sym)),
         (SYM_BINDING, ion_symbol(binding_sym)),
         (SYM_AUXILIARY_DATA, aux_ref_struct),
         (SYM_READING_ORDERS, ion_list([reading_order])),

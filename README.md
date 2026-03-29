@@ -54,6 +54,10 @@ Or in Calibre GUI: **Preferences → Plugins → Load plugin from file** → sel
 
 或在 Calibre GUI 中：**首选项 → 插件 → 从文件加载插件** → 选择 `kfx-comic-output.zip`
 
+If the button doesn't appear in the toolbar after installation, add it manually: **Preferences → Toolbars & menus → The main toolbar** → find "Convert Comics to KFX" in the left list → move it to the right → Apply.
+
+如果安装后工具栏没有显示按钮，需要手动添加：**首选项 → 工具栏和菜单 → 主工具栏** → 在左侧列表找到 "Convert Comics to KFX" → 移到右侧 → 应用。
+
 Then:
 1. Select books in Calibre
 2. Click **"Convert Comics to KFX"** in the toolbar

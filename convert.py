@@ -238,7 +238,8 @@ def extract_images(epub_path: str, output_dir: str) -> int:
 
 def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
                        author: str = "", reading_direction: str = "rtl",
-                       language: str = "ja", virtual_panels: str = "off") -> None:
+                       language: str = "ja", virtual_panels: str = "off",
+                       facing_pages: bool = False) -> None:
     """Generate KPF from images using the custom KPF generator."""
     image_paths = sorted([
         os.path.join(image_dir, f) for f in os.listdir(image_dir)
@@ -254,6 +255,7 @@ def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
         reading_direction=reading_direction,
         language=language,
         virtual_panels=virtual_panels,
+        facing_pages=facing_pages,
     )
 
 
@@ -314,7 +316,8 @@ def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
 
 def convert_to_kfx(input_path: str, output_dir: str,
                    reading_direction: str = "rtl",
-                   virtual_panels: str = "off") -> None:
+                   virtual_panels: str = "off",
+                   facing_pages: bool = False) -> None:
     """
     Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
@@ -323,6 +326,7 @@ def convert_to_kfx(input_path: str, output_dir: str,
         output_dir: Directory where the final KFX file will be placed.
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         virtual_panels: "off", "horizontal", or "vertical".
+        facing_pages: Enable facing pages (spreads) for landscape viewing.
     """
     input_name = Path(input_path).stem
     kfx_output = os.path.join(output_dir, f"{input_name}.kfx")
@@ -359,7 +363,8 @@ def convert_to_kfx(input_path: str, output_dir: str,
         run_kpf_generation(image_dir, kpf_path,
                            title=metadata["title"], author=metadata["author"],
                            reading_direction=reading_direction,
-                           virtual_panels=virtual_panels)
+                           virtual_panels=virtual_panels,
+                           facing_pages=facing_pages)
         kpf_size = os.path.getsize(kpf_path) / (1024 * 1024)
         print(f"    KPF: {kpf_size:.1f} MB")
 
@@ -394,6 +399,11 @@ def main() -> None:
         help="Virtual panel navigation mode (default: off)",
     )
     parser.add_argument(
+        "--facing-pages",
+        action="store_true",
+        help="Enable facing pages (spreads) for landscape viewing",
+    )
+    parser.add_argument(
         "input_files",
         nargs="+",
         metavar="file",
@@ -418,7 +428,8 @@ def main() -> None:
             fail_count += 1
             continue
         try:
-            convert_to_kfx(input_file, args.output, args.direction, args.virtual_panels)
+            convert_to_kfx(input_file, args.output, args.direction,
+                          args.virtual_panels, args.facing_pages)
             success_count += 1
         except Exception as e:
             print(f"\nError processing {input_file}: {e}")

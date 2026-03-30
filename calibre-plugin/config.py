@@ -6,6 +6,7 @@ DEFAULTS = {
     "reading_direction": "rtl",
     "language": "zh",
     "virtual_panels": "off",
+    "facing_pages": False,
 }
 
 LANGUAGES = {

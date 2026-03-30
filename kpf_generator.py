@@ -51,6 +51,11 @@ class IdAllocator:
         self._counters[prefix] = idx + 1
         return prefix + _int_to_base32(idx)
 
+    @property
+    def total_count(self) -> int:
+        """Total number of IDs allocated across all prefixes."""
+        return sum(self._counters.values())
+
 
 # ===========================================================================
 # Minimal Amazon Ion binary encoder
@@ -225,6 +230,7 @@ SYM_ABSOLUTE = 377            # $377 (enum value)
 SYM_IMAGE_WIDTH = 422         # $422
 SYM_IMAGE_HEIGHT = 423        # $423
 SYM_VIRTUAL_PANEL_DIR = 434       # $434 (virtual panel direction field)
+SYM_SPREAD_LAYOUT = 437           # $437 (spread/facing layout type)
 SYM_RIGHT_TO_LEFT_BINDING = 441   # $441 (enum value for binding)
 SYM_LEFT_TO_RIGHT_BINDING = 442   # $442 (enum value for binding)
 SYM_BOOK_METADATA = 490       # $490 (annotation)
@@ -259,13 +265,25 @@ SYM_LOCAL_SOURCE_FILE_NAME = 852          # yj.authoring.source_file_name
 SYM_LOCAL_ORIGINAL_RESOURCE = 853         # yj.authoring.original_resource
 SYM_LOCAL_PRESERVED_ORIGINAL = 854        # yj.authoring.preserved_original_resource
 
-LOCAL_SYMBOLS = [
+LOCAL_SYMBOLS_BASE = [
     "yj.authoring.source_file_name",
     "yj.authoring.original_resource",
     "yj.authoring.preserved_original_resource",
 ]
 
-MAX_SYMBOL_ID = 854
+FACING_PAGE_SYMBOLS = [
+    "yj.authoring.auto_panel_settings_padding_left",
+    "yj.authoring.auto_panel_settings_padding_right",
+    "yj.authoring.auto_panel_settings_mask_color",
+    "yj.authoring.auto_panel_settings_auto_mask_color_flag",
+    "yj.authoring.auto_panel_settings_opacity",
+    "yj.authoring.auto_panel_settings_padding_top",
+    "yj.authoring.auto_panel_settings_padding_bottom",
+]
+
+# Base SID for local symbols: 9 system + 842 YJ_symbols + 1 = 852
+LOCAL_SID_BASE = 852
+MAX_SYMBOL_ID_BASE = 854  # 851 + 3 local symbols
 
 TOOL_VERSION = "1.110.0.0"
 
@@ -282,27 +300,26 @@ def _wrap_blob(data: bytes) -> bytes:
 
 def _build_ion_symbol_table() -> bytes:
     """Build the $ion_symbol_table fragment payload."""
-    # $ion_symbol_table::{
-    #     max_id: 854,
-    #     imports: [{name: "YJ_symbols", version: 10, max_id: 842}],
-    #     symbols: ["yj.authoring.source_file_name", ...]
-    # }
+    local_syms = list(LOCAL_SYMBOLS_BASE)
+    max_sid = LOCAL_SID_BASE - 1 + len(local_syms)
+
     import_entry = ion_struct([
         (4, ion_string("YJ_symbols")),   # $4 = name
         (5, ion_int(10)),                 # $5 = version
         (8, ion_int(842)),                # $8 = max_id
     ])
     fields = [
-        (8, ion_int(MAX_SYMBOL_ID)),                    # max_id
-        (6, ion_list([import_entry])),                   # imports
-        (7, ion_list([ion_string(s) for s in LOCAL_SYMBOLS])),  # symbols
+        (8, ion_int(max_sid)),                              # max_id
+        (6, ion_list([import_entry])),                      # imports
+        (7, ion_list([ion_string(s) for s in local_syms])), # symbols
     ]
     return _wrap_blob(ion_annotation([3], ion_struct(fields)))  # $3 = $ion_symbol_table
 
 
 def _build_max_id_fragment() -> bytes:
     """Build the max_id fragment payload (simple integer)."""
-    return _wrap_blob(ion_int(MAX_SYMBOL_ID))
+    max_sid = LOCAL_SID_BASE - 1 + len(LOCAL_SYMBOLS_BASE)
+    return _wrap_blob(ion_int(max_sid))
 
 
 def _build_book_navigation() -> bytes:
@@ -311,7 +328,8 @@ def _build_book_navigation() -> bytes:
 
 
 def _build_section(section_id: str, struct_eid: str, storyline_id: str,
-                   width: int, height: int, virtual_panels: str = "off") -> bytes:
+                   width: int, height: int, virtual_panels: str = "off",
+                   is_facing: bool = False) -> bytes:
     """Build a section fragment payload.
 
     $260::{
@@ -320,17 +338,53 @@ def _build_section(section_id: str, struct_eid: str, storyline_id: str,
         $434: $441  (only when virtual_panels != "off")
     }
     """
+    layout_sym = SYM_SPREAD_LAYOUT if is_facing else SYM_FIXED_LAYOUT
     inline_struct = ion_annotation([SYM_STRUCTURE], ion_struct([
         (SYM_SELF_REF, ion_eid_ref(struct_eid)),
         (SYM_STORYLINE_ID, ion_eid_ref(storyline_id)),
         (SYM_PAGE_WIDTH, ion_int(width)),
         (SYM_PAGE_HEIGHT, ion_int(height)),
-        (SYM_LAYOUT_TYPE, ion_symbol(SYM_FIXED_LAYOUT)),
+        (SYM_LAYOUT_TYPE, ion_symbol(layout_sym)),
         (SYM_PAGE_TEMPLATE_TYPE, ion_symbol(SYM_FIXED)),
         (SYM_NODE_TYPE, ion_symbol(SYM_CONTAINER)),
     ]))
     fields = [
         (SYM_SECTION_ID, ion_eid_ref(section_id)),
+        (SYM_SECTION_CONTENT, ion_list([inline_struct])),
+    ]
+    if virtual_panels != "off":
+        fields.append((SYM_VIRTUAL_PANEL_DIR, ion_symbol(SYM_RIGHT_TO_LEFT_BINDING)))
+    section = ion_annotation([SYM_SECTION], ion_struct(fields))
+    return _wrap_blob(section)
+
+
+def _build_facing_section(section_id: str, struct_eid: str, storyline_id: str,
+                          combined_width: int, page_height: int,
+                          virtual_panels: str = "off",
+                          panel_syms: dict | None = None) -> bytes:
+    """Build a facing page (spread) section fragment.
+
+    Same as _build_section but with extra auto_panel_settings fields.
+    """
+    inline_struct = ion_annotation([SYM_STRUCTURE], ion_struct([
+        (SYM_SELF_REF, ion_eid_ref(struct_eid)),
+        (SYM_STORYLINE_ID, ion_eid_ref(storyline_id)),
+        (SYM_PAGE_WIDTH, ion_int(combined_width)),
+        (SYM_PAGE_HEIGHT, ion_int(page_height)),
+        (SYM_LAYOUT_TYPE, ion_symbol(SYM_FIXED_LAYOUT)),
+        (SYM_PAGE_TEMPLATE_TYPE, ion_symbol(SYM_FIXED)),
+        (SYM_NODE_TYPE, ion_symbol(SYM_CONTAINER)),
+    ]))
+    ps = panel_syms or {}
+    fields = [
+        (ps.get("padding_left", 853), ion_int(10)),
+        (ps.get("padding_right", 854), ion_int(10)),
+        (ps.get("mask_color", 855), ion_int(0)),
+        (ps.get("auto_mask_color_flag", 856), b"\x10"),  # bool false
+        (ps.get("opacity", 857), ion_float64(1.0)),
+        (SYM_SECTION_ID, ion_eid_ref(section_id)),
+        (ps.get("padding_top", 858), ion_int(10)),
+        (ps.get("padding_bottom", 859), ion_int(10)),
         (SYM_SECTION_CONTENT, ion_list([inline_struct])),
     ]
     if virtual_panels != "off":
@@ -364,6 +418,24 @@ def _build_section_position_id_map(section_id: str, struct_eid: str,
     return _wrap_blob(spm)
 
 
+def _build_facing_section_position_id_map(
+        section_id: str, struct_eid: str,
+        container1_eid: str, leaf1_eid: str,
+        container2_eid: str, leaf2_eid: str) -> bytes:
+    """Build section_position_id_map for a facing page (5 positions)."""
+    spm = ion_annotation([SYM_SECTION_POSITION_ID_MAP], ion_struct([
+        (SYM_SECTION_ID, ion_eid_ref(section_id)),
+        (SYM_POSITION_MAP, ion_list([
+            ion_list([ion_int(1), ion_eid_ref(struct_eid)]),
+            ion_list([ion_int(2), ion_eid_ref(container1_eid)]),
+            ion_list([ion_int(3), ion_eid_ref(leaf1_eid)]),
+            ion_list([ion_int(4), ion_eid_ref(container2_eid)]),
+            ion_list([ion_int(5), ion_eid_ref(leaf2_eid)]),
+        ])),
+    ]))
+    return _wrap_blob(spm)
+
+
 def _build_storyline(storyline_id: str, container_eid: str) -> bytes:
     """Build a storyline fragment.
 
@@ -375,6 +447,19 @@ def _build_storyline(storyline_id: str, container_eid: str) -> bytes:
     storyline = ion_annotation([SYM_STORYLINE], ion_struct([
         (SYM_STORYLINE_ID, ion_eid_ref(storyline_id)),
         (SYM_CHILDREN, ion_list([ion_eid_ref(container_eid)])),
+    ]))
+    return _wrap_blob(storyline)
+
+
+def _build_facing_storyline(storyline_id: str,
+                            container1_eid: str, container2_eid: str) -> bytes:
+    """Build a storyline with two container children (for facing pages)."""
+    storyline = ion_annotation([SYM_STORYLINE], ion_struct([
+        (SYM_STORYLINE_ID, ion_eid_ref(storyline_id)),
+        (SYM_CHILDREN, ion_list([
+            ion_eid_ref(container1_eid),
+            ion_eid_ref(container2_eid),
+        ])),
     ]))
     return _wrap_blob(storyline)
 
@@ -395,6 +480,27 @@ def _build_structure_container(eid: str, width: int, height: int,
         (SYM_HEIGHT, ion_int(height)),
         (SYM_POSITION_TYPE, ion_symbol(SYM_ABSOLUTE)),
         (SYM_LAYOUT_TYPE, ion_symbol(SYM_BLOCK)),
+        (SYM_NODE_TYPE, ion_symbol(SYM_CONTAINER)),
+        (SYM_CHILDREN, ion_list([ion_eid_ref(child_eid)])),
+    ]))
+    return _wrap_blob(node)
+
+
+def _build_facing_structure_container(eid: str, width: int, height: int,
+                                      child_eid: str) -> bytes:
+    """Build a container structure node for facing pages.
+
+    Uses $66/$67 (page dimensions) instead of $56/$57,
+    $326 (fixed_layout) instead of $323 (block),
+    and adds $140 (page_template_type) = $320 (fixed).
+    """
+    node = ion_annotation([SYM_STRUCTURE], ion_struct([
+        (SYM_SELF_REF, ion_eid_ref(eid)),
+        (SYM_POSITION_TYPE, ion_symbol(SYM_ABSOLUTE)),
+        (SYM_PAGE_WIDTH, ion_int(width)),
+        (SYM_PAGE_HEIGHT, ion_int(height)),
+        (SYM_LAYOUT_TYPE, ion_symbol(SYM_FIXED_LAYOUT)),
+        (SYM_PAGE_TEMPLATE_TYPE, ion_symbol(SYM_FIXED)),
         (SYM_NODE_TYPE, ion_symbol(SYM_CONTAINER)),
         (SYM_CHILDREN, ion_list([ion_eid_ref(child_eid)])),
     ]))
@@ -783,7 +889,8 @@ def _detect_image_format(path: str) -> str:
 
 def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
                  author: str = "", reading_direction: str = "rtl",
-                 language: str = "en-US", virtual_panels: str = "off") -> None:
+                 language: str = "en-US", virtual_panels: str = "off",
+                 facing_pages: bool = False) -> None:
     """Generate a KPF file from a list of images.
 
     Args:
@@ -794,6 +901,7 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         language: Language code (e.g. "en-US", "ja").
         virtual_panels: "off", "horizontal", or "vertical".
+        facing_pages: If True, pair pages as spreads (first page single, then 2+3, 4+5...).
     """
     if not image_paths:
         raise ValueError("At least one image is required")
@@ -821,45 +929,54 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         })
 
     # -----------------------------------------------------------------------
+    # Phase 1.5: Group pages and resize facing pairs to matching heights
+    # -----------------------------------------------------------------------
+    section_groups: list[list[int]] = []
+    if facing_pages and num_pages > 1:
+        section_groups.append([0])
+        i = 1
+        while i < num_pages:
+            if i + 1 < num_pages:
+                section_groups.append([i, i + 1])
+                i += 2
+            else:
+                section_groups.append([i])
+                i += 1
+    else:
+        for i in range(num_pages):
+            section_groups.append([i])
+
+    # -----------------------------------------------------------------------
     # Phase 2: Allocate IDs
     # -----------------------------------------------------------------------
-    ids = IdAllocator()
 
-    # Allocate the resource list auxiliary_data ID first
+    ids = IdAllocator()
     resource_list_aux_id = ids.next_id("d")  # d0
 
-    # Per-page IDs
-    per_page: list[dict] = []
-    for i in range(num_pages):
-        section_id = ids.next_id("c")
-        struct_eid = ids.next_id("t")
-        storyline_id = ids.next_id("l")
-        container_eid = ids.next_id("i")
-        leaf_eid = ids.next_id("i")
-        resource_eid = ids.next_id("e")
-        rsrc_id = ids.next_id("rsrc")
-        aux_id = ids.next_id("d")
-        per_page.append({
-            "section_id": section_id,
-            "struct_eid": struct_eid,
-            "storyline_id": storyline_id,
-            "container_eid": container_eid,
-            "leaf_eid": leaf_eid,
-            "resource_eid": resource_eid,
-            "rsrc_id": rsrc_id,
-            "aux_id": aux_id,
-        })
+    # Per-section IDs
+    per_section: list[dict] = []
+    for group in section_groups:
+        sec = {
+            "page_indices": group,
+            "is_facing": len(group) == 2,
+            "section_id": ids.next_id("c"),
+            "struct_eid": ids.next_id("t"),
+            "storyline_id": ids.next_id("l"),
+            "images": [],
+        }
+        for _ in group:
+            sec["images"].append({
+                "container_eid": ids.next_id("i"),
+                "leaf_eid": ids.next_id("i"),
+                "resource_eid": ids.next_id("e"),
+                "rsrc_id": ids.next_id("rsrc"),
+                "aux_id": ids.next_id("d"),
+            })
+        per_section.append(sec)
 
-    # Calculate max_eid for document_data
-    # The max EID value is the total number of assigned IDs
-    # Count: per page = 8 IDs, plus resource_list_aux_id = 1
-    max_eid = 1 + num_pages * 8
-
-    # All section IDs in reading order
-    section_ids = [p["section_id"] for p in per_page]
-
-    # All resource auxiliary_data IDs
-    resource_aux_ids = [p["aux_id"] for p in per_page]
+    max_eid = ids.total_count
+    section_ids = [s["section_id"] for s in per_section]
+    resource_aux_ids = [img["aux_id"] for s in per_section for img in s["images"]]
 
     # -----------------------------------------------------------------------
     # Phase 3: Build fragments
@@ -923,96 +1040,132 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
     frag_props.append((resource_list_aux_id, "element_type", "auxiliary_data"))
     gc_reachable.add(resource_list_aux_id)
 
-    # --- Per-page fragments ---
-    # Collect EID -> section mapping for hash buckets
+    # --- Per-section fragments ---
     eid_section_map: list[tuple[str, str]] = []
 
-    for i in range(num_pages):
-        p = per_page[i]
-        info = page_info[i]
-        w, h = info["width"], info["height"]
-        fmt_sym = SYM_JPG if info["format"] == "jpg" else SYM_PNG
+    for sec in per_section:
+        sid = sec["section_id"]
+        t_eid = sec["struct_eid"]
+        l_id = sec["storyline_id"]
+        is_facing = sec["is_facing"]
+        page_indices = sec["page_indices"]
+        images = sec["images"]
 
-        sid = p["section_id"]
-        t_eid = p["struct_eid"]
-        l_id = p["storyline_id"]
-        i_container = p["container_eid"]
-        i_leaf = p["leaf_eid"]
-        e_id = p["resource_eid"]
-        rsrc_id = p["rsrc_id"]
-        d_id = p["aux_id"]
+        # Compute section dimensions
+        heights = [page_info[pi]["height"] for pi in page_indices]
+        widths = [page_info[pi]["width"] for pi in page_indices]
+        section_height = max(heights)
+        section_width = max(widths)
 
-        # Section
+        # --- Section fragment ---
         fragments.append((sid, "blob",
-                           _build_section(sid, t_eid, l_id, w, h, virtual_panels)))
+                           _build_section(sid, t_eid, l_id,
+                                          section_width, section_height,
+                                          virtual_panels, is_facing)))
         frag_props.append((sid, "element_type", "section"))
         frag_props.append((sid, "child", f"{sid}-ad"))
         frag_props.append((sid, "child", l_id))
         gc_reachable.add(sid)
         gc_reachable.add(f"{sid}-ad")
 
-        # Section position ID map
+        # --- Section position ID map ---
         spm_id = f"{sid}-spm"
-        fragments.append((spm_id, "blob",
-                           _build_section_position_id_map(
-                               sid, t_eid, i_container, i_leaf)))
+        if is_facing:
+            fragments.append((spm_id, "blob",
+                               _build_facing_section_position_id_map(
+                                   sid, t_eid,
+                                   images[0]["container_eid"], images[0]["leaf_eid"],
+                                   images[1]["container_eid"], images[1]["leaf_eid"])))
+        else:
+            fragments.append((spm_id, "blob",
+                               _build_section_position_id_map(
+                                   sid, t_eid,
+                                   images[0]["container_eid"],
+                                   images[0]["leaf_eid"])))
         frag_props.append((spm_id, "element_type", "section_position_id_map"))
         gc_reachable.add(spm_id)
 
-        # Storyline
-        fragments.append((l_id, "blob",
-                           _build_storyline(l_id, i_container)))
-        frag_props.append((l_id, "element_type", "storyline"))
-        frag_props.append((l_id, "child", i_container))
+        # --- Storyline ---
+        if is_facing:
+            fragments.append((l_id, "blob",
+                               _build_facing_storyline(
+                                   l_id, images[0]["container_eid"],
+                                   images[1]["container_eid"])))
+            frag_props.append((l_id, "element_type", "storyline"))
+            for img in images:
+                frag_props.append((l_id, "child", img["container_eid"]))
+                gc_frag_props.append((l_id, "child", img["container_eid"]))
+        else:
+            fragments.append((l_id, "blob",
+                               _build_storyline(l_id, images[0]["container_eid"])))
+            frag_props.append((l_id, "element_type", "storyline"))
+            frag_props.append((l_id, "child", images[0]["container_eid"]))
+            gc_frag_props.append((l_id, "child", images[0]["container_eid"]))
         frag_props.append((l_id, "child", l_id))
-        gc_frag_props.append((l_id, "child", i_container))
         gc_frag_props.append((l_id, "child", l_id))
         gc_reachable.add(l_id)
 
-        # Container structure
-        fragments.append((i_container, "blob",
-                           _build_structure_container(
-                               i_container, w, h, i_leaf)))
-        frag_props.append((i_container, "element_type", "structure"))
-        frag_props.append((i_container, "child", i_leaf))
-        gc_reachable.add(i_container)
+        # --- Per-image fragments (container, leaf, resource, etc.) ---
+        for img_idx, img in enumerate(images):
+            pi = page_indices[img_idx]
+            info = page_info[pi]
+            w, h = info["width"], info["height"]
+            fmt_sym = SYM_JPG if info["format"] == "jpg" else SYM_PNG
 
-        # Leaf structure
-        fragments.append((i_leaf, "blob",
-                           _build_structure_leaf(i_leaf, w, h, e_id)))
-        frag_props.append((i_leaf, "element_type", "structure"))
-        frag_props.append((i_leaf, "child", e_id))
-        gc_reachable.add(i_leaf)
+            i_container = img["container_eid"]
+            i_leaf = img["leaf_eid"]
+            e_id = img["resource_eid"]
+            rsrc_id = img["rsrc_id"]
+            d_id = img["aux_id"]
 
-        # External resource
-        fragments.append((e_id, "blob",
-                           _build_external_resource(
-                               e_id, info["filename"], fmt_sym, rsrc_id,
-                               d_id, w, h)))
-        frag_props.append((e_id, "element_type", "external_resource"))
-        frag_props.append((e_id, "child", d_id))
-        frag_props.append((e_id, "child", rsrc_id))
-        gc_reachable.add(e_id)
+            # Container structure
+            if is_facing:
+                fragments.append((i_container, "blob",
+                                   _build_facing_structure_container(i_container, w, h, i_leaf)))
+            else:
+                fragments.append((i_container, "blob",
+                                   _build_structure_container(i_container, w, h, i_leaf)))
+            frag_props.append((i_container, "element_type", "structure"))
+            frag_props.append((i_container, "child", i_leaf))
+            gc_reachable.add(i_container)
 
-        # bcRawMedia (path type)
-        rsrc_path = f"res/{rsrc_id}"
-        fragments.append((rsrc_id, "path", rsrc_path))
-        frag_props.append((rsrc_id, "element_type", "bcRawMedia"))
-        gc_reachable.add(rsrc_id)
+            # Leaf structure
+            fragments.append((i_leaf, "blob",
+                               _build_structure_leaf(i_leaf, w, h, e_id)))
+            frag_props.append((i_leaf, "element_type", "structure"))
+            frag_props.append((i_leaf, "child", e_id))
+            gc_reachable.add(i_leaf)
 
-        # Auxiliary data
-        fragments.append((d_id, "blob",
-                           _build_auxiliary_data(
-                               d_id, rsrc_id, info["size"],
-                               modified_time, info["path"])))
-        frag_props.append((d_id, "element_type", "auxiliary_data"))
-        gc_reachable.add(d_id)
+            # External resource
+            fragments.append((e_id, "blob",
+                               _build_external_resource(
+                                   e_id, info["filename"], fmt_sym, rsrc_id,
+                                   d_id, w, h)))
+            frag_props.append((e_id, "element_type", "external_resource"))
+            frag_props.append((e_id, "child", d_id))
+            frag_props.append((e_id, "child", rsrc_id))
+            gc_reachable.add(e_id)
 
-        # EID -> section mappings (4 per page)
+            # bcRawMedia (path type)
+            fragments.append((rsrc_id, "path", f"res/{rsrc_id}"))
+            frag_props.append((rsrc_id, "element_type", "bcRawMedia"))
+            gc_reachable.add(rsrc_id)
+
+            # Auxiliary data
+            fragments.append((d_id, "blob",
+                               _build_auxiliary_data(
+                                   d_id, rsrc_id, info["size"],
+                                   modified_time, info["path"])))
+            frag_props.append((d_id, "element_type", "auxiliary_data"))
+            gc_reachable.add(d_id)
+
+            # EID -> section mappings
+            eid_section_map.append((i_container, sid))
+            eid_section_map.append((i_leaf, sid))
+
+        # Section-level EID mappings
         eid_section_map.append((sid, sid))
         eid_section_map.append((t_eid, sid))
-        eid_section_map.append((i_container, sid))
-        eid_section_map.append((i_leaf, sid))
 
     # --- EID hash buckets ---
     total_eids = len(eid_section_map)
@@ -1042,7 +1195,10 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         gc_reachable.add(bucket_id)
 
     # --- Section PID count map ---
-    section_pid_counts = [(sid, 3) for sid in section_ids]
+    section_pid_counts = [
+        (sec["section_id"], 5 if sec["is_facing"] else 3)
+        for sec in per_section
+    ]
     fragments.append(("yj.section_pid_count_map", "blob",
                        _build_section_pid_count_map(section_pid_counts)))
     frag_props.append(("yj.section_pid_count_map", "element_type",
@@ -1135,19 +1291,20 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
             manifest.encode("utf-8")).hexdigest()
 
         # --- Resource images ---
-        for i in range(num_pages):
-            rsrc_id = per_page[i]["rsrc_id"]
-            rsrc_path = f"resources/res/{rsrc_id}"
-            with open(page_info[i]["path"], "rb") as f:
-                img_data = f.read()
-            zf.writestr(rsrc_path, img_data)
-            content_hashes[rsrc_path] = hashlib.md5(img_data).hexdigest()
+        for sec in per_section:
+            for img_idx, img in enumerate(sec["images"]):
+                pi = sec["page_indices"][img_idx]
+                rsrc_id = img["rsrc_id"]
+                rsrc_path = f"resources/res/{rsrc_id}"
+                with open(page_info[pi]["path"], "rb") as f:
+                    img_data = f.read()
+                zf.writestr(rsrc_path, img_data)
+                content_hashes[rsrc_path] = hashlib.md5(img_data).hexdigest()
 
         # --- Preview thumbnails (book_N.jpg) ---
         for i in range(num_pages):
             book_img_name = f"book_{i + 1}.jpg"
             img_path = page_info[i]["path"]
-            # Generate JPEG thumbnail for preview
             with Image.open(img_path) as im:
                 if im.mode != "RGB":
                     im = im.convert("RGB")
@@ -1195,6 +1352,7 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         zf.writestr("book.kcb", kcb_json)
 
 
+
 # ===========================================================================
 # CLI entry point
 # ===========================================================================
@@ -1216,6 +1374,8 @@ def main():
     parser.add_argument("--virtual-panels", default="off",
                         choices=["off", "horizontal", "vertical"],
                         help="Virtual panel navigation mode (default: off)")
+    parser.add_argument("--facing-pages", action="store_true",
+                        help="Enable facing pages (spreads) for landscape viewing")
     args = parser.parse_args()
 
     generate_kpf(
@@ -1226,6 +1386,7 @@ def main():
         reading_direction=args.direction,
         language=args.language,
         virtual_panels=args.virtual_panels,
+        facing_pages=args.facing_pages,
     )
     print(f"KPF generated: {args.output}")
 

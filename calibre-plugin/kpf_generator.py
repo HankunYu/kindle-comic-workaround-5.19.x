@@ -224,6 +224,7 @@ SYM_FIXED_LAYOUT_MODE_LTR = 376  # $376 (enum value, LTR layout)
 SYM_ABSOLUTE = 377            # $377 (enum value)
 SYM_IMAGE_WIDTH = 422         # $422
 SYM_IMAGE_HEIGHT = 423        # $423
+SYM_VIRTUAL_PANEL_DIR = 434       # $434 (virtual panel direction field)
 SYM_RIGHT_TO_LEFT_BINDING = 441   # $441 (enum value for binding)
 SYM_LEFT_TO_RIGHT_BINDING = 442   # $442 (enum value for binding)
 SYM_BOOK_METADATA = 490       # $490 (annotation)
@@ -310,12 +311,13 @@ def _build_book_navigation() -> bytes:
 
 
 def _build_section(section_id: str, struct_eid: str, storyline_id: str,
-                   width: int, height: int) -> bytes:
+                   width: int, height: int, virtual_panels: str = "off") -> bytes:
     """Build a section fragment payload.
 
     $260::{
         $174: section_id,
-        $141: [$608::{inline structure definition}]
+        $141: [$608::{inline structure definition}],
+        $434: $441  (only when virtual_panels != "off")
     }
     """
     inline_struct = ion_annotation([SYM_STRUCTURE], ion_struct([
@@ -327,10 +329,13 @@ def _build_section(section_id: str, struct_eid: str, storyline_id: str,
         (SYM_PAGE_TEMPLATE_TYPE, ion_symbol(SYM_FIXED)),
         (SYM_NODE_TYPE, ion_symbol(SYM_CONTAINER)),
     ]))
-    section = ion_annotation([SYM_SECTION], ion_struct([
+    fields = [
         (SYM_SECTION_ID, ion_eid_ref(section_id)),
         (SYM_SECTION_CONTENT, ion_list([inline_struct])),
-    ]))
+    ]
+    if virtual_panels != "off":
+        fields.append((SYM_VIRTUAL_PANEL_DIR, ion_symbol(SYM_RIGHT_TO_LEFT_BINDING)))
+    section = ion_annotation([SYM_SECTION], ion_struct(fields))
     return _wrap_blob(section)
 
 
@@ -503,7 +508,8 @@ def _build_resource_list_auxiliary_data(aux_id: str,
 
 
 def _build_document_data(section_ids: list[str], resource_list_aux_id: str,
-                         max_eid: int, reading_direction: str) -> bytes:
+                         max_eid: int, reading_direction: str,
+                         virtual_panels: str = "off") -> bytes:
     """Build the document_data fragment.
 
     $538::{
@@ -518,7 +524,11 @@ def _build_document_data(section_ids: list[str], resource_list_aux_id: str,
     """
     # Kindle Create always uses RTL symbols for page_dir and binding,
     # and controls LTR/RTL via the layout mode symbol ($375 vs $376).
-    page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
+    # Exception: vertical virtual panels use $558 for page_dir.
+    if virtual_panels == "vertical":
+        page_dir_sym = SYM_LEFT_TO_RIGHT_PAGE
+    else:
+        page_dir_sym = SYM_RIGHT_TO_LEFT_PAGE
     binding_sym = SYM_RIGHT_TO_LEFT_BINDING
     if reading_direction == "rtl":
         layout_mode_sym = SYM_FIXED_LAYOUT_MODE_RTL
@@ -566,18 +576,19 @@ def _build_metadata(section_ids: list[str]) -> bytes:
     return _wrap_blob(meta)
 
 
-def _build_book_metadata(language: str) -> bytes:
+def _build_book_metadata(language: str, virtual_panels: str = "off") -> bytes:
     """Build the book_metadata fragment.
 
     $490::{$491: [4 categories...]}
     """
     book_id = "P_" + uuid.uuid4().hex[:21]
 
+    panels_value = 0 if virtual_panels != "off" else 1
     cap_category = ion_struct([
         (SYM_CATEGORY_NAME, ion_string("kindle_capability_metadata")),
         (SYM_METADATA, ion_list([
             ion_struct([(SYM_KEY, ion_string("yj_publisher_panels")),
-                        (SYM_VALUE, ion_int(1))]),
+                        (SYM_VALUE, ion_int(panels_value))]),
             ion_struct([(SYM_KEY, ion_string("yj_fixed_layout")),
                         (SYM_VALUE, ion_int(1))]),
         ])),
@@ -619,15 +630,15 @@ def _build_book_metadata(language: str) -> bytes:
     return _wrap_blob(bm)
 
 
-def _build_content_features() -> bytes:
+def _build_content_features(virtual_panels: str = "off") -> bytes:
     """Build the content_features fragment.
 
     $585::{
         $598: $585,
-        $590: [two feature entries]
+        $590: [feature entries]
     }
     """
-    feature1 = ion_struct([
+    feature_fl = ion_struct([
         (SYM_NAMESPACE, ion_string("com.amazon.yjconversion")),
         (SYM_KEY, ion_string("yj_non_pdf_fixed_layout")),
         (SYM_PROPERTIES, ion_struct([
@@ -638,20 +649,24 @@ def _build_content_features() -> bytes:
         ])),
     ])
 
-    feature2 = ion_struct([
-        (SYM_NAMESPACE, ion_string("com.amazon.yjconversion")),
-        (SYM_KEY, ion_string("yj_publisher_panels")),
-        (SYM_PROPERTIES, ion_struct([
-            (5, ion_struct([  # $5 = version
-                (SYM_MAJOR_VERSION, ion_int(2)),
-                (SYM_MINOR_VERSION, ion_int(0)),
+    features = [feature_fl]
+
+    if virtual_panels == "off":
+        feature_pp = ion_struct([
+            (SYM_NAMESPACE, ion_string("com.amazon.yjconversion")),
+            (SYM_KEY, ion_string("yj_publisher_panels")),
+            (SYM_PROPERTIES, ion_struct([
+                (5, ion_struct([  # $5 = version
+                    (SYM_MAJOR_VERSION, ion_int(2)),
+                    (SYM_MINOR_VERSION, ion_int(0)),
+                ])),
             ])),
-        ])),
-    ])
+        ])
+        features.append(feature_pp)
 
     cf = ion_annotation([SYM_CONTENT_FEATURES], ion_struct([
         (SYM_SELF_REF, ion_symbol(SYM_CONTENT_FEATURES)),
-        (SYM_FEATURES_LIST, ion_list([feature1, feature2])),
+        (SYM_FEATURES_LIST, ion_list(features)),
     ]))
     return _wrap_blob(cf)
 
@@ -768,7 +783,7 @@ def _detect_image_format(path: str) -> str:
 
 def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
                  author: str = "", reading_direction: str = "rtl",
-                 language: str = "en-US") -> None:
+                 language: str = "en-US", virtual_panels: str = "off") -> None:
     """Generate a KPF file from a list of images.
 
     Args:
@@ -778,6 +793,7 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         author: Book author (used in metadata).
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         language: Language code (e.g. "en-US", "ja").
+        virtual_panels: "off", "horizontal", or "vertical".
     """
     if not image_paths:
         raise ValueError("At least one image is required")
@@ -876,19 +892,20 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
     gc_frag_props.append(("book_navigation", "child", "book_navigation"))
 
     # book_metadata
-    fragments.append(("book_metadata", "blob", _build_book_metadata(language)))
+    fragments.append(("book_metadata", "blob", _build_book_metadata(language, virtual_panels)))
     frag_props.append(("book_metadata", "element_type", "book_metadata"))
     gc_reachable.add("book_metadata")
 
     # content_features
-    fragments.append(("content_features", "blob", _build_content_features()))
+    fragments.append(("content_features", "blob", _build_content_features(virtual_panels)))
     frag_props.append(("content_features", "element_type", "content_features"))
     gc_reachable.add("content_features")
 
     # document_data
     fragments.append(("document_data", "blob",
                        _build_document_data(section_ids, resource_list_aux_id,
-                                            max_eid, reading_direction)))
+                                            max_eid, reading_direction,
+                                            virtual_panels)))
     frag_props.append(("document_data", "element_type", "document_data"))
     frag_props.append(("document_data", "child", resource_list_aux_id))
     gc_frag_props.append(("document_data", "child", resource_list_aux_id))
@@ -927,7 +944,7 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
 
         # Section
         fragments.append((sid, "blob",
-                           _build_section(sid, t_eid, l_id, w, h)))
+                           _build_section(sid, t_eid, l_id, w, h, virtual_panels)))
         frag_props.append((sid, "element_type", "section"))
         frag_props.append((sid, "child", f"{sid}-ad"))
         frag_props.append((sid, "child", l_id))
@@ -1158,9 +1175,9 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
                 "book_fl_type": 1,
                 "book_input_type": 4,
                 "book_reading_direction": reading_dir_val,
-                "book_reading_option": 1,
+                "book_reading_option": 2 if virtual_panels != "off" else 1,
                 "book_target_type": 3,
-                "book_virtual_panelmovement": 0,
+                "book_virtual_panelmovement": {"off": 0, "horizontal": 1, "vertical": 2}[virtual_panels],
             },
             "content_hash": content_hashes,
             "metadata": {
@@ -1196,6 +1213,9 @@ def main():
                         help="Reading direction (default: rtl)")
     parser.add_argument("--language", default="en-US",
                         help="Language code (default: en-US)")
+    parser.add_argument("--virtual-panels", default="off",
+                        choices=["off", "horizontal", "vertical"],
+                        help="Virtual panel navigation mode (default: off)")
     args = parser.parse_args()
 
     generate_kpf(
@@ -1205,6 +1225,7 @@ def main():
         author=args.author,
         reading_direction=args.direction,
         language=args.language,
+        virtual_panels=args.virtual_panels,
     )
     print(f"KPF generated: {args.output}")
 

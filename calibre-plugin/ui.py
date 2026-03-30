@@ -36,6 +36,16 @@ class KFXComicAction(InterfaceAction):
         self._ltr_action.setCheckable(True)
         self._ltr_action.triggered.connect(lambda: self._set_direction("ltr"))
 
+        # Virtual panels submenu
+        from calibre_plugins.kfx_comic_output.config import VIRTUAL_PANELS
+        self._vp_menu = self._menu.addMenu("Virtual panels")
+        self._vp_actions = {}
+        for key, label in VIRTUAL_PANELS.items():
+            action = self._vp_menu.addAction(label)
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, k=key: self._set_virtual_panels(k))
+            self._vp_actions[key] = action
+
         # Language submenu
         from calibre_plugins.kfx_comic_output.config import LANGUAGES
         self._lang_menu = self._menu.addMenu("Language")
@@ -61,6 +71,13 @@ class KFXComicAction(InterfaceAction):
         prefs.commit()
         self._update_checks()
 
+    def _set_virtual_panels(self, mode):
+        from calibre_plugins.kfx_comic_output.config import get_prefs
+        prefs = get_prefs()
+        prefs["virtual_panels"] = mode
+        prefs.commit()
+        self._update_checks()
+
     def _set_language(self, language):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
@@ -74,6 +91,9 @@ class KFXComicAction(InterfaceAction):
         is_rtl = prefs["reading_direction"] == "rtl"
         self._rtl_action.setChecked(is_rtl)
         self._ltr_action.setChecked(not is_rtl)
+        current_vp = prefs["virtual_panels"]
+        for key, action in self._vp_actions.items():
+            action.setChecked(key == current_vp)
         current_lang = prefs["language"]
         for key, action in self._lang_actions.items():
             action.setChecked(key == current_lang)

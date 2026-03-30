@@ -5,6 +5,7 @@ PREFS_NAMESPACE = "KFXComicOutputPlugin"
 DEFAULTS = {
     "reading_direction": "rtl",
     "language": "zh",
+    "virtual_panels": "off",
 }
 
 LANGUAGES = {
@@ -12,6 +13,12 @@ LANGUAGES = {
     "zh": "Chinese",
     "ko": "Korean",
     "en": "English",
+}
+
+VIRTUAL_PANELS = {
+    "off": "Off",
+    "horizontal": "Horizontal",
+    "vertical": "Vertical",
 }
 
 

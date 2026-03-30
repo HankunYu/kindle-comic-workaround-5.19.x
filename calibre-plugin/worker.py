@@ -296,6 +296,7 @@ def convert_book(book_info, log=None):
     prefs = get_prefs()
     reading_direction = prefs["reading_direction"]
     language = prefs["language"]
+    virtual_panels = prefs.get("virtual_panels", "off")
 
     source_path = book_info["source_path"]
     source_fmt = book_info["source_fmt"]
@@ -375,6 +376,7 @@ def convert_book(book_info, log=None):
             author=author,
             reading_direction=reading_direction,
             language=language,
+            virtual_panels=virtual_panels,
         )
 
         if log:

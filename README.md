@@ -61,12 +61,20 @@ If the button doesn't appear in the toolbar after installation, add it manually:
 Then:
 1. Select books in Calibre
 2. Click **"Convert Comics to KFX"** in the toolbar
-3. Use the dropdown arrow to switch between **Right to Left** (manga) and **Left to Right** (comic) reading direction
+3. Use the dropdown arrow to configure:
+   - **Reading direction**: Right to Left (manga) / Left to Right (comic)
+   - **Virtual panels**: Off / Horizontal / Vertical (guided panel navigation)
+   - **Facing pages**: Enable spread view for landscape reading
+   - **Language**: Japanese / Chinese / Korean / English
 
 使用：
 1. 在 Calibre 中选中书籍
 2. 点击工具栏的 **"Convert Comics to KFX"** 按钮
-3. 通过下拉箭头切换 **从右到左**（日漫）或 **从左到右**（美漫）阅读方向
+3. 通过下拉箭头配置：
+   - **阅读方向**：从右到左（日漫）/ 从左到右（美漫）
+   - **虚拟面板**：关闭 / 水平 / 垂直（引导式面板导航）
+   - **对开页**：启用横屏双页显示
+   - **语言**：日语 / 中文 / 韩语 / 英语
 
 ### CLI
 
@@ -76,6 +84,15 @@ python convert.py manga.epub
 
 # MOBI / AZW / AZW3
 python convert.py manga.mobi
+
+# Left to right reading direction / 从左到右阅读
+python convert.py --direction ltr comic.epub
+
+# Facing pages for landscape / 对开页横屏阅读
+python convert.py --facing-pages manga.epub
+
+# Virtual panel navigation / 虚拟面板导航
+python convert.py --virtual-panels horizontal manga.epub
 
 # Multiple files / 批量转换
 python convert.py *.epub *.mobi

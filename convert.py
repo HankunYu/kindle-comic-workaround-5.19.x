@@ -101,19 +101,20 @@ def parse_spine_items(epub_zip: zipfile.ZipFile, opf_path: str) -> list[tuple[st
     return items
 
 
-def extract_image_from_xhtml(epub_zip: zipfile.ZipFile, xhtml_path: str) -> str | None:
+def extract_images_from_xhtml(epub_zip: zipfile.ZipFile, xhtml_path: str) -> list[str]:
     """
-    Extract image reference from an XHTML spine item.
+    Extract all image references from an XHTML spine item.
 
     Handles both <img src="..."> and <svg><image xlink:href="..."> patterns.
     Falls back to regex if XML parsing fails.
+    Returns a list of resolved image paths (may contain one or many).
     """
     xhtml_bytes = epub_zip.read(xhtml_path)
     xhtml_dir = str(Path(xhtml_path).parent)
     if xhtml_dir == ".":
         xhtml_dir = ""
 
-    image_href = None
+    image_hrefs = []
 
     try:
         root = ET.fromstring(xhtml_bytes)
@@ -121,57 +122,51 @@ def extract_image_from_xhtml(epub_zip: zipfile.ZipFile, xhtml_path: str) -> str 
         for image_el in root.iter(f"{{{NS_SVG}}}image"):
             href = image_el.get(f"{{{NS_XLINK}}}href")
             if href:
-                image_href = href
-                break
+                image_hrefs.append(href)
 
-        if not image_href:
-            for img_el in root.iter(f"{{{NS_XHTML}}}img"):
-                src = img_el.get("src")
-                if src:
-                    image_href = src
-                    break
+        for img_el in root.iter(f"{{{NS_XHTML}}}img"):
+            src = img_el.get("src")
+            if src:
+                image_hrefs.append(src)
 
-        if not image_href:
+        if not image_hrefs:
             for img_el in root.iter("img"):
                 src = img_el.get("src")
                 if src:
-                    image_href = src
-                    break
+                    image_hrefs.append(src)
 
-        if not image_href:
             for image_el in root.iter("image"):
                 href = image_el.get(f"{{{NS_XLINK}}}href") or image_el.get("href")
                 if href:
-                    image_href = href
-                    break
+                    image_hrefs.append(href)
 
     except ET.ParseError:
         pass
 
-    if not image_href:
+    if not image_hrefs:
         xhtml_text = xhtml_bytes.decode("utf-8", errors="replace")
 
-        match = re.search(r'<image[^>]+xlink:href=["\']([^"\']+)["\']', xhtml_text)
-        if match:
-            image_href = match.group(1)
+        for match in re.finditer(r'<image[^>]+xlink:href=["\']([^"\']+)["\']', xhtml_text):
+            image_hrefs.append(match.group(1))
 
-        if not match:
-            match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', xhtml_text)
-            if match:
-                image_href = match.group(1)
+        if not image_hrefs:
+            for match in re.finditer(r'<img[^>]+src=["\']([^"\']+)["\']', xhtml_text):
+                image_hrefs.append(match.group(1))
 
-    if not image_href:
-        return None
+    results = []
+    seen = set()
+    for href in image_hrefs:
+        if xhtml_dir:
+            full_path = str(Path(f"{xhtml_dir}/{href}"))
+        else:
+            full_path = href
+        full_path = os.path.normpath(full_path)
+        full_path = full_path.replace("\\", "/")
+        if full_path not in seen:
+            seen.add(full_path)
+            results.append(full_path)
 
-    if xhtml_dir:
-        full_path = str(Path(f"{xhtml_dir}/{image_href}"))
-    else:
-        full_path = image_href
-
-    full_path = os.path.normpath(full_path)
-    full_path = full_path.replace("\\", "/")
-
-    return full_path
+    return results
 
 
 def extract_metadata(epub_path: str) -> dict[str, str]:
@@ -215,23 +210,24 @@ def extract_images(epub_path: str, output_dir: str) -> int:
             if xhtml_href not in zip_names:
                 continue
 
-            image_path = extract_image_from_xhtml(epub_zip, xhtml_href)
-            if not image_path or image_path not in zip_names:
-                continue
+            image_paths = extract_images_from_xhtml(epub_zip, xhtml_href)
+            for image_path in image_paths:
+                if image_path not in zip_names:
+                    continue
 
-            ext = Path(image_path).suffix.lower()
-            if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
-                ext = ".jpg"
-            if ext == ".jpeg":
-                ext = ".jpg"
+                ext = Path(image_path).suffix.lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+                    ext = ".jpg"
+                if ext == ".jpeg":
+                    ext = ".jpg"
 
-            count += 1
-            seq_name = f"{count:04d}{ext}"
-            image_data = epub_zip.read(image_path)
+                count += 1
+                seq_name = f"{count:04d}{ext}"
+                image_data = epub_zip.read(image_path)
 
-            out_path = os.path.join(output_dir, seq_name)
-            with open(out_path, "wb") as f:
-                f.write(image_data)
+                out_path = os.path.join(output_dir, seq_name)
+                with open(out_path, "wb") as f:
+                    f.write(image_data)
 
     return count
 

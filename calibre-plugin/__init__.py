@@ -13,7 +13,7 @@ class KFXComicOutputPlugin(InterfaceActionBase):
     description = "Convert manga/comic to KFX format optimized for Kindle"
     supported_platforms = ["osx", "windows", "linux"]
     author = "Hankun Yu"
-    version = (1, 1, 1)
+    version = (1, 1, 2)
     minimum_calibre_version = (5, 0, 0)
     actual_plugin = "calibre_plugins.kfx_comic_output.ui:KFXComicAction"
 

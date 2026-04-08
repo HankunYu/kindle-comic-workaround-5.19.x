@@ -18,12 +18,12 @@ Since Kindle firmware 5.19.2, sideloaded manga and comics have display issues:
 
 ## Solution / 解决方案
 
-Convert manga/comic files (EPUB, MOBI, AZW, AZW3) to KFX format via a reverse-engineered KPF (Kindle Publishing Format) generator. KFX is Kindle's native format and renders comics correctly without the issues above.
+Convert manga/comic files (EPUB, MOBI, AZW, AZW3, PDF) to KFX format via a reverse-engineered KPF (Kindle Publishing Format) generator. KFX is Kindle's native format and renders comics correctly without the issues above.
 
-将漫画文件（EPUB、MOBI、AZW、AZW3）通过逆向工程的 KPF 生成器转换为 KFX 格式。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
+将漫画文件（EPUB、MOBI、AZW、AZW3、PDF）通过逆向工程的 KPF 生成器转换为 KFX 格式。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
 
 ```
-EPUB/MOBI/AZW → Extract images → Generate KPF → Convert to KFX
+EPUB/MOBI/AZW/PDF → Extract images → Generate KPF → Convert to KFX
 ```
 
 ## Requirements / 依赖
@@ -85,6 +85,9 @@ python convert.py manga.epub
 # MOBI / AZW / AZW3
 python convert.py manga.mobi
 
+# PDF
+python convert.py manga.pdf
+
 # Left to right reading direction / 从左到右阅读
 python convert.py --direction ltr comic.epub
 
@@ -95,7 +98,7 @@ python convert.py --facing-pages manga.epub
 python convert.py --virtual-panels horizontal manga.epub
 
 # Multiple files / 批量转换
-python convert.py *.epub *.mobi
+python convert.py *.epub *.mobi *.pdf
 
 # Specify output directory / 指定输出目录
 python convert.py -o output/ manga.epub
@@ -109,13 +112,13 @@ Copy the `.kfx` file to your Kindle's `documents` folder via USB, or use Calibre
 
 ## How It Works / 工作原理
 
-1. **Extract images** from EPUB/MOBI in reading order (MOBI/AZW are first converted to EPUB via Calibre)
+1. **Extract images** from EPUB/MOBI/PDF in reading order (MOBI/AZW/PDF are first converted to EPUB via Calibre)
 2. **Generate KPF** using a reverse-engineered Kindle Publishing Format generator (bypasses the GUI-only Kindle Create tool)
 3. **Convert KPF to KFX** via Calibre's KFX Output plugin
 
 ---
 
-1. 按阅读顺序从 EPUB/MOBI 中**提取图片**（MOBI/AZW 会先通过 Calibre 转为 EPUB）
+1. 按阅读顺序从 EPUB/MOBI/PDF 中**提取图片**（MOBI/AZW/PDF 会先通过 Calibre 转为 EPUB）
 2. 使用逆向工程的 KPF 生成器**生成 KPF**（绕过了只有 GUI 的 Kindle Create 工具）
 3. 通过 Calibre 的 KFX Output 插件将 **KPF 转换为 KFX**
 

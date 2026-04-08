@@ -1,7 +1,7 @@
 """
 Background conversion worker for KFX Comic Output plugin.
 
-Handles the full pipeline: extract images from EPUB/CBZ -> generate KPF -> convert to KFX.
+Handles the full pipeline: extract images from EPUB/CBZ/PDF -> generate KPF -> convert to KFX.
 """
 
 import os
@@ -315,7 +315,7 @@ def convert_book(book_info, log=None):
             log.info(f"KFX Comic: Extracting images from {source_fmt}...")
 
         epub_path = source_path
-        if source_fmt in ("MOBI", "AZW", "AZW3"):
+        if source_fmt in ("MOBI", "AZW", "AZW3", "PDF"):
             # Convert to EPUB first using Calibre's ebook-convert
             if log:
                 log.info(f"KFX Comic: Converting {source_fmt} to EPUB...")

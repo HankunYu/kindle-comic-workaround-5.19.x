@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Manga EPUB to KFX conversion pipeline for Kindle devices.
+Manga/comic to KFX conversion pipeline for Kindle devices.
 
 Pipeline:
-  1. Extract images from EPUB in spine reading order
-  2. Generate KPF via custom KPF generator (reverse-engineered format)
-  3. Convert KPF to KFX via Calibre KFX Output plugin
+  1. Convert to EPUB if needed (PDF/MOBI/AZW via Calibre's ebook-convert)
+  2. Extract images from EPUB in spine reading order
+  3. Generate KPF via custom KPF generator (reverse-engineered format)
+  4. Convert KPF to KFX via Calibre KFX Output plugin
 """
 
 import argparse
@@ -281,11 +282,11 @@ def run_kfx_conversion(kpf_path: str, kfx_path: str) -> None:
         raise RuntimeError(f"KFX output not found: {kfx_path}")
 
 
-SUPPORTED_FORMATS = (".epub", ".mobi", ".azw", ".azw3")
+SUPPORTED_FORMATS = (".epub", ".mobi", ".azw", ".azw3", ".pdf")
 
 
 def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
-    """Convert MOBI/AZW to EPUB if needed. Returns path to EPUB file."""
+    """Convert MOBI/AZW/PDF to EPUB if needed. Returns path to EPUB file."""
     ext = Path(input_path).suffix.lower()
     if ext == ".epub":
         return input_path
@@ -318,7 +319,7 @@ def convert_to_kfx(input_path: str, output_dir: str,
     Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
     Args:
-        input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3).
+        input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3, PDF).
         output_dir: Directory where the final KFX file will be placed.
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         virtual_panels: "off", "horizontal", or "vertical".
@@ -403,7 +404,7 @@ def main() -> None:
         "input_files",
         nargs="+",
         metavar="file",
-        help="One or more EPUB/MOBI/AZW/AZW3 files to convert",
+        help="One or more EPUB/MOBI/AZW/AZW3/PDF files to convert",
     )
 
     args = parser.parse_args()

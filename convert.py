@@ -194,6 +194,32 @@ def extract_metadata(epub_path: str) -> dict[str, str]:
     return metadata
 
 
+def is_calibre_default_cover_page(xhtml_bytes: bytes) -> bool:
+    """
+    Detect Calibre's auto-generated placeholder cover page.
+
+    When Calibre converts inputs that lack an embedded cover (e.g. PDF via
+    `ebook-convert`), its EPUB Output plugin injects a titlepage.xhtml marked
+    with `<meta name="calibre:cover" content="true"/>`. The referenced
+    cover_image.jpg is a synthetic placeholder (solid-color background with
+    file name + author), not the real first page of the source.
+
+    Native manga/comic EPUBs use their own cover page without this marker,
+    so filtering titlepages by this meta is safe — it only drops Calibre's
+    fake placeholder, letting the real first content page become 0001.jpg.
+    """
+    # Cheap prefilter — avoid regex on every xhtml
+    if b"calibre:cover" not in xhtml_bytes:
+        return False
+    # Full check: a <meta> element with both name="calibre:cover" and content="true",
+    # in either attribute order.
+    pattern = (
+        rb'<meta\b[^>]*\bname=["\']calibre:cover["\'][^>]*\bcontent=["\']true["\']'
+        rb'|<meta\b[^>]*\bcontent=["\']true["\'][^>]*\bname=["\']calibre:cover["\']'
+    )
+    return bool(re.search(pattern, xhtml_bytes))
+
+
 def extract_images(epub_path: str, output_dir: str) -> int:
     """
     Extract images from EPUB in spine reading order.
@@ -209,6 +235,12 @@ def extract_images(epub_path: str, output_dir: str) -> int:
 
         for _, xhtml_href in spine_items:
             if xhtml_href not in zip_names:
+                continue
+
+            # Skip Calibre-generated placeholder titlepages (see helper docstring).
+            # Otherwise the synthetic cover_image.jpg would become 0001.jpg and
+            # push the real first page to 0002.jpg — which is the PDF cover bug.
+            if is_calibre_default_cover_page(epub_zip.read(xhtml_href)):
                 continue
 
             image_paths = extract_images_from_xhtml(epub_zip, xhtml_href)

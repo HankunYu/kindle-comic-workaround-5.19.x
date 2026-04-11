@@ -11,6 +11,8 @@ import traceback
 
 from calibre.gui2 import error_dialog, info_dialog
 
+from calibre_plugins.kfx_comic_output.i18n import T
+
 
 def start_conversion(gui):
     """
@@ -24,8 +26,8 @@ def start_conversion(gui):
     if not rows:
         return error_dialog(
             gui,
-            "No books selected",
-            "Please select one or more comic/manga books to convert.",
+            T("No books selected"),
+            T("Please select one or more comic/manga books to convert."),
             show=True,
         )
 
@@ -48,13 +50,13 @@ def start_conversion(gui):
                 break
 
         if source_fmt is None:
-            skipped.append(f"{mi.title} (no supported format)")
+            skipped.append(f"{mi.title} {T('(no supported format)')}")
             continue
 
         # Get the path to the source file
         source_path = db.format_abspath(book_id, source_fmt)
         if not source_path or not os.path.isfile(source_path):
-            skipped.append(f"{mi.title} (file not found)")
+            skipped.append(f"{mi.title} {T('(file not found)')}")
             continue
 
         books_to_convert.append({
@@ -66,18 +68,18 @@ def start_conversion(gui):
         })
 
     if not books_to_convert:
-        msg = "No convertible books found in selection."
+        msg = T("No convertible books found in selection.")
         if skipped:
-            msg += "\n\nSkipped:\n" + "\n".join(f"  - {s}" for s in skipped)
-        return error_dialog(gui, "Nothing to convert", msg, show=True)
+            msg += "\n\n" + "\n".join(f"  - {s}" for s in skipped)
+        return error_dialog(gui, T("Nothing to convert"), msg, show=True)
 
     # Show warning for skipped books
     if skipped:
         from calibre.gui2 import warning_dialog
         warning_dialog(
             gui,
-            "Some books skipped",
-            "The following books were skipped (no supported format):",
+            T("Some books skipped"),
+            T("The following books were skipped (no supported format):"),
             det_msg="\n".join(skipped),
             show=True,
         )
@@ -88,7 +90,9 @@ def start_conversion(gui):
 
     total = len(books_to_convert)
     progress = QProgressDialog(
-        f"Converting {total} comic(s) to KFX...", "Cancel", 0, total, gui
+        T("Converting {n} comic(s) to KFX...").format(n=total),
+        T("Cancelled"),  # cancel button label
+        0, total, gui,
     )
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.setMinimumDuration(0)
@@ -99,9 +103,13 @@ def start_conversion(gui):
     results = []
     for idx, book_info in enumerate(books_to_convert):
         if progress.wasCanceled():
-            results.append((book_info["book_id"], None, "Cancelled"))
+            results.append((book_info["book_id"], None, T("Cancelled")))
             continue
-        progress.setLabelText(f"[{idx+1}/{total}] {book_info['title']}")
+        progress.setLabelText(
+            T("[{i}/{n}] {title}").format(
+                i=idx + 1, n=total, title=book_info["title"]
+            )
+        )
         QApplication.processEvents()
         try:
             kfx_path = convert_book(book_info)
@@ -135,7 +143,7 @@ def _job_finished(gui, results, books_to_convert):
                 break
 
         if error:
-            failures.append(f"{title}: {error}")
+            failures.append(T("{title}: {error}").format(title=title, error=error))
             continue
 
         if kfx_path and os.path.isfile(kfx_path):
@@ -145,7 +153,12 @@ def _job_finished(gui, results, books_to_convert):
                     db.add_format(book_id, "KFX", f)
                 successes.append(title)
             except Exception as e:
-                failures.append(f"{title}: Failed to add KFX to library: {e}")
+                failures.append(
+                    T("{title}: {error}").format(
+                        title=title,
+                        error=T("Failed to add KFX to library: {error}").format(error=e),
+                    )
+                )
             finally:
                 # Clean up the temporary KFX file
                 try:
@@ -153,7 +166,11 @@ def _job_finished(gui, results, books_to_convert):
                 except OSError:
                     pass
         else:
-            failures.append(f"{title}: KFX output file not found")
+            failures.append(
+                T("{title}: {error}").format(
+                    title=title, error=T("KFX output file not found")
+                )
+            )
 
     # Refresh the library view to show new formats
     gui.library_view.model().refresh()
@@ -161,34 +178,34 @@ def _job_finished(gui, results, books_to_convert):
     # Build result message
     msg_parts = []
     if successes:
-        msg_parts.append(f"Successfully converted {len(successes)} book(s):")
+        msg_parts.append(T("Successfully converted {n} book(s):").format(n=len(successes)))
         for t in successes:
             msg_parts.append(f"  - {t}")
     if failures:
         if msg_parts:
             msg_parts.append("")
-        msg_parts.append(f"Failed to convert {len(failures)} book(s):")
+        msg_parts.append(T("Failed to convert {n} book(s):").format(n=len(failures)))
         for f in failures:
             msg_parts.append(f"  - {f}")
 
     detail = "\n".join(msg_parts)
 
     if failures and not successes:
-        error_dialog(gui, "Conversion failed", detail, show=True)
+        error_dialog(gui, T("Conversion failed"), detail, show=True)
     elif failures:
         from calibre.gui2 import warning_dialog
         warning_dialog(
             gui,
-            "Conversion partially complete",
-            f"{len(successes)} succeeded, {len(failures)} failed.",
+            T("Conversion partially complete"),
+            T("{s} succeeded, {f} failed.").format(s=len(successes), f=len(failures)),
             det_msg=detail,
             show=True,
         )
     else:
         info_dialog(
             gui,
-            "Conversion complete",
-            f"Successfully converted {len(successes)} book(s) to KFX.",
+            T("Conversion complete"),
+            T("Successfully converted {n} book(s) to KFX.").format(n=len(successes)),
             det_msg=detail,
             show=True,
         )

@@ -7,6 +7,7 @@ DEFAULTS = {
     "language": "zh",
     "virtual_panels": "off",
     "facing_pages": False,
+    "facing_start": "single",
 }
 
 LANGUAGES = {
@@ -20,6 +21,11 @@ VIRTUAL_PANELS = {
     "off": "Off",
     "horizontal": "Horizontal",
     "vertical": "Vertical",
+}
+
+FACING_START = {
+    "single": "Start with single page (cover)",
+    "double": "Start with double page",
 }
 
 

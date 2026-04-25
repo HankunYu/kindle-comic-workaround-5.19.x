@@ -4,7 +4,7 @@ from calibre.customize import InterfaceActionBase
 # Single source of truth for the plugin version. Both the class attribute
 # below and updater.py read from this constant, so bumping the version
 # here is enough — no other file needs to change.
-__plugin_version__ = (1, 1, 3)
+__plugin_version__ = (1, 1, 4)
 
 
 class KFXComicOutputPlugin(InterfaceActionBase):

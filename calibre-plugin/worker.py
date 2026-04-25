@@ -326,6 +326,7 @@ def convert_book(book_info, log=None):
     language = prefs["language"]
     virtual_panels = prefs.get("virtual_panels", "off")
     facing_pages = prefs.get("facing_pages", False)
+    facing_start = prefs.get("facing_start", "single")
 
     source_path = book_info["source_path"]
     source_fmt = book_info["source_fmt"]
@@ -407,6 +408,7 @@ def convert_book(book_info, log=None):
             language=language,
             virtual_panels=virtual_panels,
             facing_pages=facing_pages,
+            facing_start=facing_start,
         )
 
         if log:

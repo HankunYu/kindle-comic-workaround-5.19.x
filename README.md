@@ -65,6 +65,7 @@ Then:
    - **Reading direction**: Right to Left (manga) / Left to Right (comic)
    - **Virtual panels**: Off / Horizontal / Vertical (guided panel navigation)
    - **Facing pages**: Enable spread view for landscape reading
+   - **Facing pages start**: Single (cover solo, then 2+3, 4+5...) / Double (1+2, 3+4...)
    - **Language**: Japanese / Chinese / Korean / English
 
 使用：
@@ -74,6 +75,7 @@ Then:
    - **阅读方向**：从右到左（日漫）/ 从左到右（美漫）
    - **虚拟面板**：关闭 / 水平 / 垂直（引导式面板导航）
    - **对开页**：启用横屏双页显示
+   - **对开页起始**：首页单独（封面单独，再 2+3、4+5…配对）/ 首页直接配对（1+2、3+4…）
    - **语言**：日语 / 中文 / 韩语 / 英语
 
 ### CLI
@@ -93,6 +95,9 @@ python convert.py --direction ltr comic.epub
 
 # Facing pages for landscape / 对开页横屏阅读
 python convert.py --facing-pages manga.epub
+
+# Facing pages, pair from page 1 / 对开页从首页直接配对
+python convert.py --facing-pages --facing-start double manga.epub
 
 # Virtual panel navigation / 虚拟面板导航
 python convert.py --virtual-panels horizontal manga.epub

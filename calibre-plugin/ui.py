@@ -68,6 +68,16 @@ class KFXComicAction(InterfaceAction):
         self._facing_action.setCheckable(True)
         self._facing_action.triggered.connect(self._toggle_facing_pages)
 
+        # Facing-pages start mode submenu (only meaningful when facing pages on)
+        from calibre_plugins.kfx_comic_output.config import FACING_START
+        self._fs_menu = self._menu.addMenu(T("Facing pages start"))
+        self._fs_actions = {}
+        for key, label in FACING_START.items():
+            action = self._fs_menu.addAction(T(label))
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, k=key: self._set_facing_start(k))
+            self._fs_actions[key] = action
+
         # Language submenu
         from calibre_plugins.kfx_comic_output.config import LANGUAGES
         self._lang_menu = self._menu.addMenu(T("Language"))
@@ -112,6 +122,13 @@ class KFXComicAction(InterfaceAction):
         prefs.commit()
         self._update_checks()
 
+    def _set_facing_start(self, mode):
+        from calibre_plugins.kfx_comic_output.config import get_prefs
+        prefs = get_prefs()
+        prefs["facing_start"] = mode
+        prefs.commit()
+        self._update_checks()
+
     def _set_language(self, language):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
@@ -129,6 +146,9 @@ class KFXComicAction(InterfaceAction):
         current_vp = prefs["virtual_panels"]
         for key, action in self._vp_actions.items():
             action.setChecked(key == current_vp)
+        current_fs = prefs.get("facing_start", "single")
+        for key, action in self._fs_actions.items():
+            action.setChecked(key == current_fs)
         current_lang = prefs["language"]
         for key, action in self._lang_actions.items():
             action.setChecked(key == current_lang)

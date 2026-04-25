@@ -890,7 +890,8 @@ def _detect_image_format(path: str) -> str:
 def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
                  author: str = "", reading_direction: str = "rtl",
                  language: str = "en-US", virtual_panels: str = "off",
-                 facing_pages: bool = False) -> None:
+                 facing_pages: bool = False,
+                 facing_start: str = "single") -> None:
     """Generate a KPF file from a list of images.
 
     Args:
@@ -901,7 +902,10 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         language: Language code (e.g. "en-US", "ja").
         virtual_panels: "off", "horizontal", or "vertical".
-        facing_pages: If True, pair pages as spreads (first page single, then 2+3, 4+5...).
+        facing_pages: If True, pair pages as spreads.
+        facing_start: "single" -> first page is solo, then 2+3, 4+5...
+                      "double" -> pair from the very first page: 1+2, 3+4...
+                      Only effective when facing_pages is True.
     """
     if not image_paths:
         raise ValueError("At least one image is required")
@@ -933,8 +937,13 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
     # -----------------------------------------------------------------------
     section_groups: list[list[int]] = []
     if facing_pages and num_pages > 1:
-        section_groups.append([0])
-        i = 1
+        # "single" leaves page 0 alone (cover), then pairs from page 1.
+        # "double" pairs from page 0 directly.
+        if facing_start == "double":
+            i = 0
+        else:
+            section_groups.append([0])
+            i = 1
         while i < num_pages:
             if i + 1 < num_pages:
                 section_groups.append([i, i + 1])
@@ -1376,6 +1385,11 @@ def main():
                         help="Virtual panel navigation mode (default: off)")
     parser.add_argument("--facing-pages", action="store_true",
                         help="Enable facing pages (spreads) for landscape viewing")
+    parser.add_argument("--facing-start", default="single",
+                        choices=["single", "double"],
+                        help="Facing-pages start mode: 'single' keeps page 1 "
+                             "solo (cover) and pairs from page 2 onward; "
+                             "'double' pairs from page 1 (default: single)")
     args = parser.parse_args()
 
     generate_kpf(
@@ -1387,6 +1401,7 @@ def main():
         language=args.language,
         virtual_panels=args.virtual_panels,
         facing_pages=args.facing_pages,
+        facing_start=args.facing_start,
     )
     print(f"KPF generated: {args.output}")
 

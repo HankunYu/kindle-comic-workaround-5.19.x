@@ -24,6 +24,9 @@ _ZH = {
     "Left to Right (comic)": "从左到右(美漫)",
     "Virtual panels": "虚拟分镜",
     "Facing pages (spreads)": "对开页(跨页)",
+    "Facing pages start": "对开页起始",
+    "Start with single page (cover)": "首页单独(封面)",
+    "Start with double page": "首页直接配对",
     "Language": "语言",
 
     # config.py — language labels

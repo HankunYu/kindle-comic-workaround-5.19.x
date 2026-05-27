@@ -682,10 +682,17 @@ def _build_metadata(section_ids: list[str]) -> bytes:
     return _wrap_blob(meta)
 
 
-def _build_book_metadata(language: str, virtual_panels: str = "off") -> bytes:
+def _build_book_metadata(language: str, virtual_panels: str = "off",
+                         cover_resource_eid: str | None = None) -> bytes:
     """Build the book_metadata fragment.
 
     $490::{$491: [4 categories...]}
+
+    cover_resource_eid: fragment id of the external_resource ($164) that
+        Calibre KFX Output / Kindle should use as the library thumbnail.
+        Without this key, Kindle falls back to rendering the first
+        section, which produces a distorted cover when the first
+        section is a spread (facing_start="double").
     """
     book_id = "P_" + uuid.uuid4().hex[:21]
 
@@ -700,14 +707,20 @@ def _build_book_metadata(language: str, virtual_panels: str = "off") -> bytes:
         ])),
     ])
 
+    title_kvs = [
+        ion_struct([(SYM_KEY, ion_string("book_id")),
+                    (SYM_VALUE, ion_string(book_id))]),
+        ion_struct([(SYM_KEY, ion_string("language")),
+                    (SYM_VALUE, ion_string(language))]),
+    ]
+    if cover_resource_eid is not None:
+        title_kvs.append(ion_struct([
+            (SYM_KEY, ion_string("cover_image")),
+            (SYM_VALUE, ion_string(cover_resource_eid)),
+        ]))
     title_category = ion_struct([
         (SYM_CATEGORY_NAME, ion_string("kindle_title_metadata")),
-        (SYM_METADATA, ion_list([
-            ion_struct([(SYM_KEY, ion_string("book_id")),
-                        (SYM_VALUE, ion_string(book_id))]),
-            ion_struct([(SYM_KEY, ion_string("language")),
-                        (SYM_VALUE, ion_string(language))]),
-        ])),
+        (SYM_METADATA, ion_list(title_kvs)),
     ])
 
     ebook_category = ion_struct([
@@ -933,7 +946,9 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         })
 
     # -----------------------------------------------------------------------
-    # Phase 1.5: Group pages and resize facing pairs to matching heights
+    # Phase 1.5: Group pages into sections (single page or facing pair).
+    # Display-box dimensions for facing pairs (combined width, common
+    # height) are computed per-section in Phase 3.
     # -----------------------------------------------------------------------
     section_groups: list[list[int]] = []
     if facing_pages and num_pages > 1:
@@ -1017,8 +1032,12 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
     gc_reachable.add("book_navigation")
     gc_frag_props.append(("book_navigation", "child", "book_navigation"))
 
-    # book_metadata
-    fragments.append(("book_metadata", "blob", _build_book_metadata(language, virtual_panels)))
+    # book_metadata — pin the library thumbnail to page 0's external_resource
+    # so a "double" facing-start spread doesn't change Kindle's cover render.
+    cover_resource_eid = per_section[0]["images"][0]["resource_eid"]
+    fragments.append(("book_metadata", "blob",
+                       _build_book_metadata(language, virtual_panels,
+                                            cover_resource_eid=cover_resource_eid)))
     frag_props.append(("book_metadata", "element_type", "book_metadata"))
     gc_reachable.add("book_metadata")
 
@@ -1060,11 +1079,26 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         page_indices = sec["page_indices"]
         images = sec["images"]
 
-        # Compute section dimensions
-        heights = [page_info[pi]["height"] for pi in page_indices]
-        widths = [page_info[pi]["width"] for pi in page_indices]
-        section_height = max(heights)
-        section_width = max(widths)
+        # Compute display-box dimensions per page.
+        # For a facing pair with mismatched heights, scale the shorter
+        # page up to the taller one (aspect preserved). Only the declared
+        # box changes; image bytes stay native and FIT_BOTH on the leaf
+        # lets Kindle scale the source into the box.
+        disp_widths = [page_info[pi]["width"] for pi in page_indices]
+        disp_heights = [page_info[pi]["height"] for pi in page_indices]
+        if is_facing and disp_heights[0] != disp_heights[1]:
+            target_h = max(disp_heights)
+            for idx in range(2):
+                if disp_heights[idx] != target_h:
+                    scale = target_h / disp_heights[idx]
+                    disp_widths[idx] = round(disp_widths[idx] * scale)
+                    disp_heights[idx] = target_h
+        section_height = max(disp_heights)
+        # A spread section's canvas spans both pages side by side, so its
+        # page_width must be the sum of the two page widths. Using max()
+        # here would squeeze the spread into a single-page-wide canvas and
+        # trigger Kindle's downscaler, halving horizontal resolution.
+        section_width = sum(disp_widths) if is_facing else disp_widths[0]
 
         # --- Section fragment ---
         fragments.append((sid, "blob",
@@ -1118,7 +1152,10 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         for img_idx, img in enumerate(images):
             pi = page_indices[img_idx]
             info = page_info[pi]
+            # w/h: native image dimensions (for external_resource).
+            # disp_w/disp_h: display-box dimensions inside the section.
             w, h = info["width"], info["height"]
+            disp_w, disp_h = disp_widths[img_idx], disp_heights[img_idx]
             fmt_sym = SYM_JPG if info["format"] == "jpg" else SYM_PNG
 
             i_container = img["container_eid"]
@@ -1127,20 +1164,20 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
             rsrc_id = img["rsrc_id"]
             d_id = img["aux_id"]
 
-            # Container structure
+            # Container structure (display box)
             if is_facing:
                 fragments.append((i_container, "blob",
-                                   _build_facing_structure_container(i_container, w, h, i_leaf)))
+                                   _build_facing_structure_container(i_container, disp_w, disp_h, i_leaf)))
             else:
                 fragments.append((i_container, "blob",
-                                   _build_structure_container(i_container, w, h, i_leaf)))
+                                   _build_structure_container(i_container, disp_w, disp_h, i_leaf)))
             frag_props.append((i_container, "element_type", "structure"))
             frag_props.append((i_container, "child", i_leaf))
             gc_reachable.add(i_container)
 
-            # Leaf structure
+            # Leaf structure (display box; FIT_BOTH scales image into it)
             fragments.append((i_leaf, "blob",
-                               _build_structure_leaf(i_leaf, w, h, e_id)))
+                               _build_structure_leaf(i_leaf, disp_w, disp_h, e_id)))
             frag_props.append((i_leaf, "element_type", "structure"))
             frag_props.append((i_leaf, "child", e_id))
             gc_reachable.add(i_leaf)

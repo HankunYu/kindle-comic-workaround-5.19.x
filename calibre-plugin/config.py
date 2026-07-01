@@ -8,6 +8,7 @@ DEFAULTS = {
     "virtual_panels": "off",
     "facing_pages": False,
     "facing_start": "single",
+    "gamma": 1.8,
 }
 
 LANGUAGES = {
@@ -26,6 +27,17 @@ VIRTUAL_PANELS = {
 FACING_START = {
     "single": "Start with single page (cover)",
     "double": "Start with double page",
+}
+
+# Display-gamma compensation for Kindle e-ink. Amazon's converters
+# (Kindle Previewer / Send-to-Kindle) brighten image midtones at
+# conversion time; 1.8 matches their output (see issue #4). 1.0 embeds
+# original image bytes untouched.
+GAMMA_CORRECTION = {
+    1.0: "Off (keep original)",
+    1.4: "1.4 (light)",
+    1.8: "1.8 (match Kindle, recommended)",
+    2.2: "2.2 (strong)",
 }
 
 

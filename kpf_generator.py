@@ -11,8 +11,10 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import struct
+import tempfile
 import time
 import uuid
 import zipfile
@@ -897,6 +899,52 @@ def _detect_image_format(path: str) -> str:
 
 
 # ===========================================================================
+# Gamma pre-correction
+# ===========================================================================
+
+# Quality for re-encoding JPEG pages after gamma correction. High enough to
+# keep generational loss invisible on e-ink without doubling file size.
+_GAMMA_JPEG_QUALITY = 92
+
+# The Kindle KFX renderer displays image pixels without any tone
+# compensation, while Amazon's own converters (Kindle Previewer 3 /
+# Send-to-Kindle) brighten midtones at conversion time to counter the
+# e-ink display response. Books built from untouched images therefore
+# render visibly darker than the same EPUB converted by Amazon's tools
+# (issue #4: measured difference ~= a 1.8 power curve on the midtones).
+DEFAULT_GAMMA = 1.8
+
+
+def _gamma_correct_image(src_path: str, dst_path: str, gamma: float) -> None:
+    """Re-encode one image with display-gamma compensation.
+
+    Applies out = (in/255) ** (1/gamma) per color channel — gamma > 1
+    brightens midtones; blacks and whites are unchanged. Alpha channels
+    are preserved untouched. JPEG stays JPEG, everything else becomes PNG.
+    """
+    lut = [min(255, round(255.0 * (i / 255.0) ** (1.0 / gamma))) for i in range(256)]
+    with Image.open(src_path) as im:
+        fmt = im.format
+        if im.mode == "P":
+            im = im.convert("RGBA" if "transparency" in im.info else "RGB")
+        if im.mode in ("RGBA", "LA"):
+            alpha = im.getchannel("A")
+            im = im.convert("RGB").point(lut * 3)
+            im.putalpha(alpha)
+        elif im.mode == "L":
+            im = im.point(lut)
+        elif im.mode == "RGB":
+            im = im.point(lut * 3)
+        else:
+            # CMYK and other exotic modes: normalize to RGB first
+            im = im.convert("RGB").point(lut * 3)
+        if fmt == "JPEG":
+            im.save(dst_path, "JPEG", quality=_GAMMA_JPEG_QUALITY)
+        else:
+            im.save(dst_path, "PNG")
+
+
+# ===========================================================================
 # Main generator
 # ===========================================================================
 
@@ -904,7 +952,8 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
                  author: str = "", reading_direction: str = "rtl",
                  language: str = "en-US", virtual_panels: str = "off",
                  facing_pages: bool = False,
-                 facing_start: str = "single") -> None:
+                 facing_start: str = "single",
+                 gamma: float = DEFAULT_GAMMA) -> None:
     """Generate a KPF file from a list of images.
 
     Args:
@@ -919,9 +968,39 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         facing_start: "single" -> first page is solo, then 2+3, 4+5...
                       "double" -> pair from the very first page: 1+2, 3+4...
                       Only effective when facing_pages is True.
+        gamma: Display-gamma compensation applied to every page image
+               (see DEFAULT_GAMMA). 1.0 embeds the original bytes untouched.
     """
     if not image_paths:
         raise ValueError("At least one image is required")
+
+    if gamma and abs(gamma - 1.0) > 1e-3:
+        # Pre-correct images into a temp dir so source files stay untouched;
+        # the rest of the pipeline reads the corrected copies.
+        gamma_dir = tempfile.mkdtemp(prefix="kpf-gamma-")
+        try:
+            corrected_paths = []
+            for idx, img_path in enumerate(image_paths):
+                ext = ".jpg" if _detect_image_format(img_path) == "jpg" else ".png"
+                dst = os.path.join(gamma_dir, f"{idx + 1:04d}{ext}")
+                _gamma_correct_image(img_path, dst, gamma)
+                corrected_paths.append(dst)
+            _generate_kpf_impl(corrected_paths, output_path, title, author,
+                               reading_direction, language, virtual_panels,
+                               facing_pages, facing_start)
+        finally:
+            shutil.rmtree(gamma_dir, ignore_errors=True)
+    else:
+        _generate_kpf_impl(image_paths, output_path, title, author,
+                           reading_direction, language, virtual_panels,
+                           facing_pages, facing_start)
+
+
+def _generate_kpf_impl(image_paths: list[str], output_path: str, title: str,
+                       author: str, reading_direction: str,
+                       language: str, virtual_panels: str,
+                       facing_pages: bool, facing_start: str) -> None:
+    """Build the KPF from ready-to-embed images (gamma already applied)."""
 
     num_pages = len(image_paths)
     modified_time = int(time.time())
@@ -1427,6 +1506,12 @@ def main():
                         help="Facing-pages start mode: 'single' keeps page 1 "
                              "solo (cover) and pairs from page 2 onward; "
                              "'double' pairs from page 1 (default: single)")
+    parser.add_argument("--gamma", type=float, default=DEFAULT_GAMMA,
+                        help="Display-gamma compensation for Kindle e-ink "
+                             "(midtone brightening applied at conversion, "
+                             "matching Kindle Previewer / Send-to-Kindle). "
+                             "1.0 keeps original image bytes untouched "
+                             f"(default: {DEFAULT_GAMMA})")
     args = parser.parse_args()
 
     generate_kpf(
@@ -1439,6 +1524,7 @@ def main():
         virtual_panels=args.virtual_panels,
         facing_pages=args.facing_pages,
         facing_start=args.facing_start,
+        gamma=args.gamma,
     )
     print(f"KPF generated: {args.output}")
 

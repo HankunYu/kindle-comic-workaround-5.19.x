@@ -181,32 +181,6 @@ def _extract_images_from_xhtml(epub_zip, xhtml_path):
     return results
 
 
-def _is_calibre_default_cover_page(xhtml_bytes):
-    """
-    Detect Calibre's auto-generated placeholder cover page.
-
-    When Calibre converts inputs that lack an embedded cover (e.g. PDF via
-    ebook-convert), its EPUB Output plugin injects a titlepage.xhtml marked
-    with <meta name="calibre:cover" content="true"/>. The referenced
-    cover_image.jpg is a synthetic placeholder (solid-color background with
-    file name + author), not the real first page of the source.
-
-    Native manga/comic EPUBs use their own cover page without this marker,
-    so filtering titlepages by this meta is safe — it only drops Calibre's
-    fake placeholder, letting the real first content page become 0001.jpg.
-    """
-    # Cheap prefilter — avoid regex on every xhtml
-    if b"calibre:cover" not in xhtml_bytes:
-        return False
-    # Full check: a <meta> element with both name="calibre:cover" and content="true",
-    # in either attribute order.
-    pattern = (
-        rb'<meta\b[^>]*\bname=["\']calibre:cover["\'][^>]*\bcontent=["\']true["\']'
-        rb'|<meta\b[^>]*\bcontent=["\']true["\'][^>]*\bname=["\']calibre:cover["\']'
-    )
-    return bool(re.search(pattern, xhtml_bytes))
-
-
 def _extract_images_from_epub(epub_path, output_dir):
     """
     Extract images from EPUB in spine reading order.
@@ -221,12 +195,6 @@ def _extract_images_from_epub(epub_path, output_dir):
 
         for _, xhtml_href in spine_items:
             if xhtml_href not in zip_names:
-                continue
-
-            # Skip Calibre-generated placeholder titlepages (see helper docstring).
-            # Otherwise the synthetic cover_image.jpg would become 0001.jpg and
-            # push the real first page to 0002.jpg — which is the PDF cover bug.
-            if _is_calibre_default_cover_page(epub_zip.read(xhtml_href)):
                 continue
 
             image_paths = _extract_images_from_xhtml(epub_zip, xhtml_href)
@@ -327,6 +295,10 @@ def convert_book(book_info, log=None):
     virtual_panels = prefs.get("virtual_panels", "off")
     facing_pages = prefs.get("facing_pages", False)
     facing_start = prefs.get("facing_start", "single")
+    try:
+        gamma = float(prefs.get("gamma", 1.8))
+    except (TypeError, ValueError):
+        gamma = 1.8
 
     source_path = book_info["source_path"]
     source_fmt = book_info["source_fmt"]
@@ -360,8 +332,11 @@ def convert_book(book_info, log=None):
                 convert_bin = shutil.which("ebook-convert")
             if not convert_bin:
                 raise FileNotFoundError("ebook-convert not found")
+            # --no-default-epub-cover: suppress Calibre's synthetic placeholder
+            # titlepage (fake cover for sources without one) while keeping the
+            # titlepage of a genuine cover, so the real cover stays page 1.
             result = subprocess.run(
-                [convert_bin, source_path, epub_path],
+                [convert_bin, source_path, epub_path, "--no-default-epub-cover"],
                 capture_output=True, text=True,
             )
             if result.returncode != 0:
@@ -409,6 +384,7 @@ def convert_book(book_info, log=None):
             virtual_panels=virtual_panels,
             facing_pages=facing_pages,
             facing_start=facing_start,
+            gamma=gamma,
         )
 
         if log:

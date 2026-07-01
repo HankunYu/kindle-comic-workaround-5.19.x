@@ -66,6 +66,7 @@ Then:
    - **Virtual panels**: Off / Horizontal / Vertical (guided panel navigation)
    - **Facing pages**: Enable spread view for landscape reading
    - **Facing pages start**: Single (cover solo, then 2+3, 4+5...) / Double (1+2, 3+4...)
+   - **Gamma correction**: Off / 1.4 / 1.8 (recommended) / 2.2 — brightens midtones the same way Kindle Previewer / Send-to-Kindle do, so pages don't render darker on e-ink
    - **Language**: Japanese / Chinese / Korean / English
 
 使用：
@@ -76,6 +77,7 @@ Then:
    - **虚拟面板**：关闭 / 水平 / 垂直（引导式面板导航）
    - **对开页**：启用横屏双页显示
    - **对开页起始**：首页单独（封面单独，再 2+3、4+5…配对）/ 首页直接配对（1+2、3+4…）
+   - **伽马校正**：关闭 / 1.4 / 1.8（推荐）/ 2.2 —— 与 Kindle Previewer / Send-to-Kindle 相同的中间调提亮，避免画面在墨水屏上显得偏深
    - **语言**：日语 / 中文 / 韩语 / 英语
 
 ### CLI
@@ -101,6 +103,9 @@ python convert.py --facing-pages --facing-start double manga.epub
 
 # Virtual panel navigation / 虚拟面板导航
 python convert.py --virtual-panels horizontal manga.epub
+
+# Disable gamma correction (keep original image bytes) / 关闭伽马校正（保留原始图片字节）
+python convert.py --gamma 1.0 manga.epub
 
 # Multiple files / 批量转换
 python convert.py *.epub *.mobi *.pdf

@@ -21,7 +21,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kpf_generator import generate_kpf
+from kpf_generator import generate_kpf, DEFAULT_GAMMA
 
 # Namespace constants
 NS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container"
@@ -194,32 +194,6 @@ def extract_metadata(epub_path: str) -> dict[str, str]:
     return metadata
 
 
-def is_calibre_default_cover_page(xhtml_bytes: bytes) -> bool:
-    """
-    Detect Calibre's auto-generated placeholder cover page.
-
-    When Calibre converts inputs that lack an embedded cover (e.g. PDF via
-    `ebook-convert`), its EPUB Output plugin injects a titlepage.xhtml marked
-    with `<meta name="calibre:cover" content="true"/>`. The referenced
-    cover_image.jpg is a synthetic placeholder (solid-color background with
-    file name + author), not the real first page of the source.
-
-    Native manga/comic EPUBs use their own cover page without this marker,
-    so filtering titlepages by this meta is safe — it only drops Calibre's
-    fake placeholder, letting the real first content page become 0001.jpg.
-    """
-    # Cheap prefilter — avoid regex on every xhtml
-    if b"calibre:cover" not in xhtml_bytes:
-        return False
-    # Full check: a <meta> element with both name="calibre:cover" and content="true",
-    # in either attribute order.
-    pattern = (
-        rb'<meta\b[^>]*\bname=["\']calibre:cover["\'][^>]*\bcontent=["\']true["\']'
-        rb'|<meta\b[^>]*\bcontent=["\']true["\'][^>]*\bname=["\']calibre:cover["\']'
-    )
-    return bool(re.search(pattern, xhtml_bytes))
-
-
 def extract_images(epub_path: str, output_dir: str) -> int:
     """
     Extract images from EPUB in spine reading order.
@@ -235,12 +209,6 @@ def extract_images(epub_path: str, output_dir: str) -> int:
 
         for _, xhtml_href in spine_items:
             if xhtml_href not in zip_names:
-                continue
-
-            # Skip Calibre-generated placeholder titlepages (see helper docstring).
-            # Otherwise the synthetic cover_image.jpg would become 0001.jpg and
-            # push the real first page to 0002.jpg — which is the PDF cover bug.
-            if is_calibre_default_cover_page(epub_zip.read(xhtml_href)):
                 continue
 
             image_paths = extract_images_from_xhtml(epub_zip, xhtml_href)
@@ -269,7 +237,8 @@ def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
                        author: str = "", reading_direction: str = "rtl",
                        language: str = "ja", virtual_panels: str = "off",
                        facing_pages: bool = False,
-                       facing_start: str = "single") -> None:
+                       facing_start: str = "single",
+                       gamma: float = DEFAULT_GAMMA) -> None:
     """Generate KPF from images using the custom KPF generator."""
     image_paths = sorted([
         os.path.join(image_dir, f) for f in os.listdir(image_dir)
@@ -287,6 +256,7 @@ def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
         virtual_panels=virtual_panels,
         facing_pages=facing_pages,
         facing_start=facing_start,
+        gamma=gamma,
     )
 
 
@@ -337,7 +307,12 @@ def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
         raise FileNotFoundError("ebook-convert not found")
 
     epub_path = os.path.join(tmp_dir, Path(input_path).stem + ".epub")
-    cmd = [convert_bin, input_path, epub_path]
+    # --no-default-epub-cover: without it, Calibre injects a titlepage for
+    # every book — a synthetic placeholder when the source has no cover
+    # (would become a fake 0001.jpg), and a wrapper around the real cover
+    # when it has one. The flag suppresses only the placeholder, while a
+    # genuine cover keeps its titlepage and is extracted as page 1.
+    cmd = [convert_bin, input_path, epub_path, "--no-default-epub-cover"]
     print(f"    Converting {ext} to EPUB...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -349,7 +324,8 @@ def convert_to_kfx(input_path: str, output_dir: str,
                    reading_direction: str = "rtl",
                    virtual_panels: str = "off",
                    facing_pages: bool = False,
-                   facing_start: str = "single") -> None:
+                   facing_start: str = "single",
+                   gamma: float = DEFAULT_GAMMA) -> None:
     """
     Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
@@ -360,6 +336,7 @@ def convert_to_kfx(input_path: str, output_dir: str,
         virtual_panels: "off", "horizontal", or "vertical".
         facing_pages: Enable facing pages (spreads) for landscape viewing.
         facing_start: "single" (default) keeps page 1 solo, "double" pairs from page 1.
+        gamma: Display-gamma compensation for Kindle e-ink; 1.0 disables.
     """
     input_name = Path(input_path).stem
     kfx_output = os.path.join(output_dir, f"{input_name}.kfx")
@@ -393,12 +370,15 @@ def convert_to_kfx(input_path: str, output_dir: str,
         # Step 2: Generate KPF
         kpf_path = os.path.join(tmp_dir, f"{input_name}.kpf")
         print(f"\n[2/3] Generating KPF...")
+        if gamma and abs(gamma - 1.0) > 1e-3:
+            print(f"    Gamma correction: {gamma}")
         run_kpf_generation(image_dir, kpf_path,
                            title=metadata["title"], author=metadata["author"],
                            reading_direction=reading_direction,
                            virtual_panels=virtual_panels,
                            facing_pages=facing_pages,
-                           facing_start=facing_start)
+                           facing_start=facing_start,
+                           gamma=gamma)
         kpf_size = os.path.getsize(kpf_path) / (1024 * 1024)
         print(f"    KPF: {kpf_size:.1f} MB")
 
@@ -445,6 +425,15 @@ def main() -> None:
              "pairs from page 2; 'double' pairs from page 1 (default: single)",
     )
     parser.add_argument(
+        "--gamma",
+        type=float,
+        default=DEFAULT_GAMMA,
+        help="Display-gamma compensation for Kindle e-ink. Brightens midtones "
+             "at conversion time the same way Kindle Previewer / Send-to-Kindle "
+             "do, so pages don't render darker than Amazon-converted books. "
+             f"Use 1.0 to keep original image bytes untouched (default: {DEFAULT_GAMMA})",
+    )
+    parser.add_argument(
         "input_files",
         nargs="+",
         metavar="file",
@@ -471,7 +460,7 @@ def main() -> None:
         try:
             convert_to_kfx(input_file, args.output, args.direction,
                           args.virtual_panels, args.facing_pages,
-                          args.facing_start)
+                          args.facing_start, args.gamma)
             success_count += 1
         except Exception as e:
             print(f"\nError processing {input_file}: {e}")

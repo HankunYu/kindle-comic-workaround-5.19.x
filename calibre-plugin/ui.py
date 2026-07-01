@@ -78,6 +78,16 @@ class KFXComicAction(InterfaceAction):
             action.triggered.connect(lambda checked, k=key: self._set_facing_start(k))
             self._fs_actions[key] = action
 
+        # Gamma correction submenu
+        from calibre_plugins.kfx_comic_output.config import GAMMA_CORRECTION
+        self._gamma_menu = self._menu.addMenu(T("Gamma correction"))
+        self._gamma_actions = {}
+        for key, label in GAMMA_CORRECTION.items():
+            action = self._gamma_menu.addAction(T(label))
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked, k=key: self._set_gamma(k))
+            self._gamma_actions[key] = action
+
         # Language submenu
         from calibre_plugins.kfx_comic_output.config import LANGUAGES
         self._lang_menu = self._menu.addMenu(T("Language"))
@@ -136,6 +146,13 @@ class KFXComicAction(InterfaceAction):
         prefs.commit()
         self._update_checks()
 
+    def _set_gamma(self, gamma):
+        from calibre_plugins.kfx_comic_output.config import get_prefs
+        prefs = get_prefs()
+        prefs["gamma"] = gamma
+        prefs.commit()
+        self._update_checks()
+
     def _update_checks(self):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
@@ -152,6 +169,13 @@ class KFXComicAction(InterfaceAction):
         current_lang = prefs["language"]
         for key, action in self._lang_actions.items():
             action.setChecked(key == current_lang)
+        try:
+            current_gamma = float(prefs.get("gamma", 1.8))
+        except (TypeError, ValueError):
+            current_gamma = 1.8
+        for key, action in self._gamma_actions.items():
+            # float compare with tolerance — value round-trips through JSON
+            action.setChecked(abs(key - current_gamma) < 1e-6)
 
     def _check_for_updates(self):
         """Query GitHub for the latest release and report to the user."""

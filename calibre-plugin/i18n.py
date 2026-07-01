@@ -28,6 +28,13 @@ _ZH = {
     "Start with single page (cover)": "首页单独(封面)",
     "Start with double page": "首页直接配对",
     "Language": "语言",
+    "Gamma correction": "伽马校正",
+
+    # config.py — gamma correction labels
+    "Off (keep original)": "关闭(保持原图)",
+    "1.4 (light)": "1.4(轻度)",
+    "1.8 (match Kindle, recommended)": "1.8(匹配 Kindle,推荐)",
+    "2.2 (strong)": "2.2(强)",
 
     # config.py — language labels
     "Japanese": "日语",

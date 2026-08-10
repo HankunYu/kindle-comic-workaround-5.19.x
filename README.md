@@ -18,25 +18,32 @@ Since Kindle firmware 5.19.2, sideloaded manga and comics have display issues:
 
 ## Solution / 解决方案
 
-Convert manga/comic files (EPUB, MOBI, AZW, AZW3, PDF) to KFX format via a reverse-engineered KPF (Kindle Publishing Format) generator. KFX is Kindle's native format and renders comics correctly without the issues above.
+Convert manga/comic files (EPUB, MOBI, AZW, AZW3, PDF) to KFX format via a fully self-contained, reverse-engineered KFX writer — no Kindle Previewer, no third-party Calibre plugins. KFX is Kindle's native format and renders comics correctly without the issues above.
 
-将漫画文件（EPUB、MOBI、AZW、AZW3、PDF）通过逆向工程的 KPF 生成器转换为 KFX 格式。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
+将漫画文件（EPUB、MOBI、AZW、AZW3、PDF）通过完全自研的逆向工程 KFX 生成器转换为 KFX 格式——不依赖 Kindle Previewer，也不依赖任何第三方 Calibre 插件。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
 
 ```
-EPUB/MOBI/AZW/PDF → Extract images → Generate KPF → Convert to KFX
+EPUB/MOBI/AZW/PDF → Extract images → Generate KFX
 ```
+
+Typical conversion takes well under a second per volume: MOBI page images are read directly at the record level (no format round trip), and the KFX container is written in a single pass.
+
+单卷转换通常不到一秒：MOBI 页面图片直接按 record 层读取（无格式往返），KFX 容器单趟写出。
 
 ## Requirements / 依赖
 
-- [Calibre](https://calibre-ebook.com/) with [KFX Output](https://www.mobileread.com/forums/showthread.php?t=272407) plugin installed
+- Calibre plugin: just [Calibre](https://calibre-ebook.com/) — nothing else
+- CLI:
+  - Python 3.10+
+  - [Pillow](https://pypi.org/project/Pillow/) (`pip install -r requirements.txt`)
+  - Calibre is only needed for PDF input (and as a fallback for unusual MOBI files); EPUB/MOBI/AZW input needs no Calibre at all
 
-CLI only:
-- Python 3.10+
-- [Pillow](https://pypi.org/project/Pillow/) (`pip install -r requirements.txt`)
-
-仅 CLI 工具需要：
-- Python 3.10+
-- [Pillow](https://pypi.org/project/Pillow/)（`pip install -r requirements.txt`）
+依赖说明：
+- Calibre 插件：只需要 [Calibre](https://calibre-ebook.com/) 本体，无需其他插件
+- CLI 工具：
+  - Python 3.10+
+  - [Pillow](https://pypi.org/project/Pillow/)（`pip install -r requirements.txt`）
+  - 仅 PDF 输入需要 Calibre（非常规 MOBI 会回退到 `ebook-convert`）；EPUB/MOBI/AZW 输入完全不需要 Calibre
 
 ## Usage / 使用方法
 
@@ -66,7 +73,7 @@ Then:
    - **Virtual panels**: Off / Horizontal / Vertical (guided panel navigation)
    - **Facing pages**: Enable spread view for landscape reading
    - **Facing pages start**: Single (cover solo, then 2+3, 4+5...) / Double (1+2, 3+4...)
-   - **Gamma correction**: Off / 1.4 / 1.8 (recommended) / 2.2 — brightens midtones the same way Kindle Previewer / Send-to-Kindle do, so pages don't render darker on e-ink
+   - **Gamma correction**: Off (default) / 1.4 / 1.8 / 2.2 — Kindle firmware renders fixed-layout comics through a darker tone path than reflowable books; 1.8 brightens midtones to compensate. Off keeps original image bytes untouched
    - **Language**: Japanese / Chinese / Korean / English
 
 使用：
@@ -77,7 +84,7 @@ Then:
    - **虚拟面板**：关闭 / 水平 / 垂直（引导式面板导航）
    - **对开页**：启用横屏双页显示
    - **对开页起始**：首页单独（封面单独，再 2+3、4+5…配对）/ 首页直接配对（1+2、3+4…）
-   - **伽马校正**：关闭 / 1.4 / 1.8（推荐）/ 2.2 —— 与 Kindle Previewer / Send-to-Kindle 相同的中间调提亮，避免画面在墨水屏上显得偏深
+   - **伽马校正**：关闭（默认）/ 1.4 / 1.8 / 2.2 —— Kindle 固件渲染固定版式漫画的色调比流式书更深，1.8 通过提亮中间调补偿；关闭则保持原始图片字节不变
    - **语言**：日语 / 中文 / 韩语 / 英语
 
 ### CLI
@@ -104,8 +111,9 @@ python convert.py --facing-pages --facing-start double manga.epub
 # Virtual panel navigation / 虚拟面板导航
 python convert.py --virtual-panels horizontal manga.epub
 
-# Disable gamma correction (keep original image bytes) / 关闭伽马校正（保留原始图片字节）
-python convert.py --gamma 1.0 manga.epub
+# Enable gamma brightening for the Kindle comic rendering path (off by default)
+# 启用伽马提亮补偿 Kindle 漫画渲染路径（默认关闭）
+python convert.py --gamma 1.8 manga.epub
 
 # Multiple files / 批量转换
 python convert.py *.epub *.mobi *.pdf
@@ -122,15 +130,13 @@ Copy the `.kfx` file to your Kindle's `documents` folder via USB, or use Calibre
 
 ## How It Works / 工作原理
 
-1. **Extract images** from EPUB/MOBI/PDF in reading order (MOBI/AZW/PDF are first converted to EPUB via Calibre)
-2. **Generate KPF** using a reverse-engineered Kindle Publishing Format generator (bypasses the GUI-only Kindle Create tool)
-3. **Convert KPF to KFX** via Calibre's KFX Output plugin
+1. **Extract images** in reading order — MOBI/AZW page images are read directly out of the PalmDB records (cover reordered to front, thumbnail record skipped); EPUB is parsed via its spine; PDF goes through Calibre's ebook-convert
+2. **Generate KFX directly** with a self-contained writer: it builds the Kindle YJ fragment structures (sections, storylines, position maps, metadata) and serializes them into a single KFX container — byte-for-byte equivalent to the output of the Kindle Create → KFX Output plugin toolchain, verified fragment by fragment
 
 ---
 
-1. 按阅读顺序从 EPUB/MOBI/PDF 中**提取图片**（MOBI/AZW/PDF 会先通过 Calibre 转为 EPUB）
-2. 使用逆向工程的 KPF 生成器**生成 KPF**（绕过了只有 GUI 的 Kindle Create 工具）
-3. 通过 Calibre 的 KFX Output 插件将 **KPF 转换为 KFX**
+1. 按阅读顺序**提取图片**——MOBI/AZW 直接从 PalmDB record 中读取页面图片（封面重排到最前，跳过缩略图记录）；EPUB 按 spine 解析；PDF 走 Calibre 的 ebook-convert
+2. 使用自研序列化器**直接生成 KFX**：构造 Kindle YJ fragment 结构（章节、故事线、位置映射、元数据）并序列化为单容器 KFX——与 Kindle Create → KFX Output 插件工具链的产物逐字节等价（已逐 fragment 验证）
 
 ## License / 许可证
 

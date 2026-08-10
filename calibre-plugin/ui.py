@@ -170,9 +170,9 @@ class KFXComicAction(InterfaceAction):
         for key, action in self._lang_actions.items():
             action.setChecked(key == current_lang)
         try:
-            current_gamma = float(prefs.get("gamma", 1.8))
+            current_gamma = float(prefs.get("gamma", 1.0))
         except (TypeError, ValueError):
-            current_gamma = 1.8
+            current_gamma = 1.0
         for key, action in self._gamma_actions.items():
             # float compare with tolerance — value round-trips through JSON
             action.setChecked(abs(key - current_gamma) < 1e-6)

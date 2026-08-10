@@ -8,7 +8,7 @@ DEFAULTS = {
     "virtual_panels": "off",
     "facing_pages": False,
     "facing_start": "single",
-    "gamma": 1.8,
+    "gamma": 1.0,
 }
 
 LANGUAGES = {
@@ -29,14 +29,15 @@ FACING_START = {
     "double": "Start with double page",
 }
 
-# Display-gamma compensation for Kindle e-ink. Amazon's converters
-# (Kindle Previewer / Send-to-Kindle) brighten image midtones at
-# conversion time; 1.8 matches their output (see issue #4). 1.0 embeds
-# original image bytes untouched.
+# Display-gamma compensation for Kindle e-ink comics. The Kindle
+# firmware renders fixed-layout comics through a darker tone path than
+# reflowable-book images (measured in issue #4; Amazon's converters do
+# NOT alter pixels). 1.8 brightens midtones to compensate; 1.0 (default)
+# embeds original image bytes untouched.
 GAMMA_CORRECTION = {
-    1.0: "Off (keep original)",
+    1.0: "Off (keep original, default)",
     1.4: "1.4 (light)",
-    1.8: "1.8 (match Kindle, recommended)",
+    1.8: "1.8 (brighten, match reflowable look)",
     2.2: "2.2 (strong)",
 }
 

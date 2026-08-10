@@ -287,7 +287,7 @@ def convert_book(book_info, log=None):
     Returns:
         Path to the generated KFX file (in a temp directory; caller must clean up).
     """
-    from calibre_plugins.kfx_comic_output.kpf_generator import generate_kpf
+    from calibre_plugins.kfx_comic_output.kfx_writer import generate_kfx
 
     prefs = get_prefs()
     reading_direction = prefs["reading_direction"]
@@ -296,9 +296,9 @@ def convert_book(book_info, log=None):
     facing_pages = prefs.get("facing_pages", False)
     facing_start = prefs.get("facing_start", "single")
     try:
-        gamma = float(prefs.get("gamma", 1.8))
+        gamma = float(prefs.get("gamma", 1.0))
     except (TypeError, ValueError):
-        gamma = 1.8
+        gamma = 1.0
 
     source_path = book_info["source_path"]
     source_fmt = book_info["source_fmt"]
@@ -320,6 +320,23 @@ def convert_book(book_info, log=None):
             log.info(f"KFX Comic: Extracting images from {source_fmt}...")
 
         epub_path = source_path
+        if source_fmt in ("MOBI", "AZW", "AZW3"):
+            # Fast path: read page images straight out of the MOBI records
+            # (~5x faster than the ebook-convert round trip, byte-faithful).
+            try:
+                from calibre_plugins.kfx_comic_output.mobi_images import (
+                    extract_images_from_mobi)
+                image_count = extract_images_from_mobi(source_path, image_dir)
+                if log:
+                    log.info(f"KFX Comic: Direct MOBI extraction: {image_count} images")
+                source_fmt = "_DONE"
+            except Exception as e:
+                if log:
+                    log.warn(f"KFX Comic: Direct MOBI extraction failed ({e}); "
+                             f"falling back to ebook-convert")
+                for leftover in os.listdir(image_dir):
+                    os.unlink(os.path.join(image_dir, leftover))
+
         if source_fmt in ("MOBI", "AZW", "AZW3", "PDF"):
             # Convert to EPUB first using Calibre's ebook-convert
             if log:
@@ -343,7 +360,9 @@ def convert_book(book_info, log=None):
                 raise RuntimeError(f"Failed to convert {source_fmt} to EPUB")
             source_fmt = "EPUB"
 
-        if source_fmt == "EPUB":
+        if source_fmt == "_DONE":
+            pass    # images already extracted directly from the MOBI records
+        elif source_fmt == "EPUB":
             epub_meta = _extract_metadata_from_epub(epub_path)
             if not title or title == "Unknown":
                 title = epub_meta["title"]
@@ -361,11 +380,12 @@ def convert_book(book_info, log=None):
         if log:
             log.info(f"KFX Comic: Extracted {image_count} images")
 
-        # Step 2: Generate KPF
+        # Step 2: Generate KFX directly with the self-contained writer
+        # (no KPF intermediate, no jhowell "KFX Output" plugin dependency)
         if log:
-            log.info(f"KFX Comic: Generating KPF...")
+            log.info(f"KFX Comic: Generating KFX...")
 
-        kpf_path = os.path.join(tmp_dir, f"{book_stem}.kpf")
+        kfx_path = os.path.join(tmp_dir, f"{book_stem}.kfx")
 
         image_paths = sorted([
             os.path.join(image_dir, f)
@@ -374,9 +394,9 @@ def convert_book(book_info, log=None):
             and Path(f).suffix.lower() in (".jpg", ".jpeg", ".png")
         ])
 
-        generate_kpf(
+        generate_kfx(
             image_paths=image_paths,
-            output_path=kpf_path,
+            output_path=kfx_path,
             title=title,
             author=author,
             reading_direction=reading_direction,
@@ -388,49 +408,11 @@ def convert_book(book_info, log=None):
         )
 
         if log:
-            kpf_size_mb = os.path.getsize(kpf_path) / (1024 * 1024)
-            log.info(f"KFX Comic: KPF generated ({kpf_size_mb:.1f} MB)")
-
-        # Step 3: Convert KPF to KFX via calibre-debug
-        if log:
-            log.info(f"KFX Comic: Converting KPF to KFX...")
-
-        kfx_path = os.path.join(tmp_dir, f"{book_stem}.kfx")
-
-        calibre_debug = _find_calibre_debug()
-        cmd = [
-            calibre_debug,
-            "-r", "KFX Output",
-            "--",
-            kpf_path,
-            kfx_path,
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-
-        if result.returncode != 0:
-            error_detail = f"stdout: {result.stdout}\nstderr: {result.stderr}"
-            if log:
-                log.error(f"KFX conversion failed:\n{error_detail}")
-            raise RuntimeError(
-                f"KFX conversion failed (exit code {result.returncode}). "
-                f"Check that the KFX Output plugin is installed."
-            )
-
-        if not os.path.isfile(kfx_path):
-            raise RuntimeError(
-                "KFX output file was not created. "
-                "Check that the KFX Output plugin is installed and working."
-            )
-
-        if log:
             kfx_size_mb = os.path.getsize(kfx_path) / (1024 * 1024)
             log.info(f"KFX Comic: KFX generated ({kfx_size_mb:.1f} MB)")
 
         # Clean up intermediate files but keep the KFX
         shutil.rmtree(image_dir, ignore_errors=True)
-        if os.path.isfile(kpf_path):
-            os.unlink(kpf_path)
 
         return kfx_path
 

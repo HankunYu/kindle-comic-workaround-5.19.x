@@ -906,13 +906,19 @@ def _detect_image_format(path: str) -> str:
 # keep generational loss invisible on e-ink without doubling file size.
 _GAMMA_JPEG_QUALITY = 92
 
-# The Kindle KFX renderer displays image pixels without any tone
-# compensation, while Amazon's own converters (Kindle Previewer 3 /
-# Send-to-Kindle) brighten midtones at conversion time to counter the
-# e-ink display response. Books built from untouched images therefore
-# render visibly darker than the same EPUB converted by Amazon's tools
-# (issue #4: measured difference ~= a 1.8 power curve on the midtones).
-DEFAULT_GAMMA = 1.8
+# Kindle firmware renders fixed-layout comic pages through a different
+# path than reflowable-book images, and that comic path displays
+# midtones visibly darker. Amazon's converters do NOT alter pixels
+# (Kindle Previewer 3 measured as byte-identical passthrough for RGB
+# JPEG and a strict identity tone mapping); the difference seen in
+# issue #4 comes from the device-side rendering path, because Amazon's
+# tools produced a *reflowable* book from the same EPUB while we
+# produce fixed-layout comics. A gamma of 1.8 brightens midtones to
+# compensate for that comic-path response (issue #4 photos: ~= a 1.8
+# power curve; photo-grade accuracy). The default is 1.0 — no
+# adjustment, original image bytes embedded untouched — matching the
+# plugin's default; pass 1.8 to opt into the compensation.
+DEFAULT_GAMMA = 1.0
 
 
 def _gamma_correct_image(src_path: str, dst_path: str, gamma: float) -> None:
@@ -942,6 +948,109 @@ def _gamma_correct_image(src_path: str, dst_path: str, gamma: float) -> None:
             im.save(dst_path, "JPEG", quality=_GAMMA_JPEG_QUALITY)
         else:
             im.save(dst_path, "PNG")
+
+
+def gamma_correct_batch(image_paths: list[str], gamma: float,
+                        dst_dir: str) -> list[str]:
+    """Gamma-correct all images into dst_dir in parallel.
+
+    PIL releases the GIL for most of the decode/encode work, so a thread
+    pool gives a near-linear speedup on multi-core machines. Returns the
+    corrected paths in input order.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(idx_path: tuple[int, str]) -> str:
+        idx, img_path = idx_path
+        ext = ".jpg" if _detect_image_format(img_path) == "jpg" else ".png"
+        dst = os.path.join(dst_dir, f"{idx + 1:04d}{ext}")
+        _gamma_correct_image(img_path, dst, gamma)
+        return dst
+
+    workers = min(8, os.cpu_count() or 2)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_one, enumerate(image_paths)))
+
+
+# ===========================================================================
+# Shared book-model helpers (used by both the KPF and KFX writers)
+# ===========================================================================
+
+def group_pages(num_pages: int, facing_pages: bool,
+                facing_start: str) -> list[list[int]]:
+    """Group page indices into sections (single page or facing pair).
+
+    "single" leaves page 0 alone (cover), then pairs from page 1.
+    "double" pairs from page 0 directly.
+    """
+    section_groups: list[list[int]] = []
+    if facing_pages and num_pages > 1:
+        if facing_start == "double":
+            i = 0
+        else:
+            section_groups.append([0])
+            i = 1
+        while i < num_pages:
+            if i + 1 < num_pages:
+                section_groups.append([i, i + 1])
+                i += 2
+            else:
+                section_groups.append([i])
+                i += 1
+    else:
+        for i in range(num_pages):
+            section_groups.append([i])
+    return section_groups
+
+
+def section_display_box(page_info: list[dict],
+                        page_indices: list[int],
+                        is_facing: bool) -> tuple[list[int], list[int], int, int]:
+    """Compute display-box dimensions for one section.
+
+    For a facing pair with mismatched heights, scale the shorter page up
+    to the taller one (aspect preserved). Only the declared box changes;
+    image bytes stay native and FIT_BOTH on the leaf lets Kindle scale
+    the source into the box.
+
+    Returns (disp_widths, disp_heights, section_width, section_height).
+    """
+    disp_widths = [page_info[pi]["width"] for pi in page_indices]
+    disp_heights = [page_info[pi]["height"] for pi in page_indices]
+    if is_facing and disp_heights[0] != disp_heights[1]:
+        target_h = max(disp_heights)
+        for idx in range(2):
+            if disp_heights[idx] != target_h:
+                scale = target_h / disp_heights[idx]
+                disp_widths[idx] = round(disp_widths[idx] * scale)
+                disp_heights[idx] = target_h
+    section_height = max(disp_heights)
+    # A spread section's canvas spans both pages side by side, so its
+    # page_width must be the sum of the two page widths. Using max()
+    # here would squeeze the spread into a single-page-wide canvas and
+    # trigger Kindle's downscaler, halving horizontal resolution.
+    section_width = sum(disp_widths) if is_facing else disp_widths[0]
+    return disp_widths, disp_heights, section_width, section_height
+
+
+def read_page_info(image_paths: list[str]) -> list[dict]:
+    """Read per-page image metadata (format, dimensions, size)."""
+    page_info: list[dict] = []
+    for img_path in image_paths:
+        abs_path = os.path.abspath(img_path)
+        fmt = _detect_image_format(abs_path)
+        with Image.open(abs_path) as im:
+            w, h = im.size
+        file_size = os.path.getsize(abs_path)
+        page_info.append({
+            "path": abs_path,
+            "format": fmt,
+            "width": w,
+            "height": h,
+            "size": file_size,
+            "filename": os.path.basename(abs_path),
+        })
+    return page_info
 
 
 # ===========================================================================
@@ -979,12 +1088,7 @@ def generate_kpf(image_paths: list[str], output_path: str, title: str = "",
         # the rest of the pipeline reads the corrected copies.
         gamma_dir = tempfile.mkdtemp(prefix="kpf-gamma-")
         try:
-            corrected_paths = []
-            for idx, img_path in enumerate(image_paths):
-                ext = ".jpg" if _detect_image_format(img_path) == "jpg" else ".png"
-                dst = os.path.join(gamma_dir, f"{idx + 1:04d}{ext}")
-                _gamma_correct_image(img_path, dst, gamma)
-                corrected_paths.append(dst)
+            corrected_paths = gamma_correct_batch(image_paths, gamma, gamma_dir)
             _generate_kpf_impl(corrected_paths, output_path, title, author,
                                reading_direction, language, virtual_panels,
                                facing_pages, facing_start)
@@ -1008,46 +1112,14 @@ def _generate_kpf_impl(image_paths: list[str], output_path: str, title: str,
     # -----------------------------------------------------------------------
     # Phase 1: Read image metadata
     # -----------------------------------------------------------------------
-    page_info: list[dict] = []
-    for img_path in image_paths:
-        abs_path = os.path.abspath(img_path)
-        fmt = _detect_image_format(abs_path)
-        with Image.open(abs_path) as im:
-            w, h = im.size
-        file_size = os.path.getsize(abs_path)
-        page_info.append({
-            "path": abs_path,
-            "format": fmt,
-            "width": w,
-            "height": h,
-            "size": file_size,
-            "filename": os.path.basename(abs_path),
-        })
+    page_info = read_page_info(image_paths)
 
     # -----------------------------------------------------------------------
     # Phase 1.5: Group pages into sections (single page or facing pair).
     # Display-box dimensions for facing pairs (combined width, common
     # height) are computed per-section in Phase 3.
     # -----------------------------------------------------------------------
-    section_groups: list[list[int]] = []
-    if facing_pages and num_pages > 1:
-        # "single" leaves page 0 alone (cover), then pairs from page 1.
-        # "double" pairs from page 0 directly.
-        if facing_start == "double":
-            i = 0
-        else:
-            section_groups.append([0])
-            i = 1
-        while i < num_pages:
-            if i + 1 < num_pages:
-                section_groups.append([i, i + 1])
-                i += 2
-            else:
-                section_groups.append([i])
-                i += 1
-    else:
-        for i in range(num_pages):
-            section_groups.append([i])
+    section_groups = group_pages(num_pages, facing_pages, facing_start)
 
     # -----------------------------------------------------------------------
     # Phase 2: Allocate IDs
@@ -1158,26 +1230,9 @@ def _generate_kpf_impl(image_paths: list[str], output_path: str, title: str,
         page_indices = sec["page_indices"]
         images = sec["images"]
 
-        # Compute display-box dimensions per page.
-        # For a facing pair with mismatched heights, scale the shorter
-        # page up to the taller one (aspect preserved). Only the declared
-        # box changes; image bytes stay native and FIT_BOTH on the leaf
-        # lets Kindle scale the source into the box.
-        disp_widths = [page_info[pi]["width"] for pi in page_indices]
-        disp_heights = [page_info[pi]["height"] for pi in page_indices]
-        if is_facing and disp_heights[0] != disp_heights[1]:
-            target_h = max(disp_heights)
-            for idx in range(2):
-                if disp_heights[idx] != target_h:
-                    scale = target_h / disp_heights[idx]
-                    disp_widths[idx] = round(disp_widths[idx] * scale)
-                    disp_heights[idx] = target_h
-        section_height = max(disp_heights)
-        # A spread section's canvas spans both pages side by side, so its
-        # page_width must be the sum of the two page widths. Using max()
-        # here would squeeze the spread into a single-page-wide canvas and
-        # trigger Kindle's downscaler, halving horizontal resolution.
-        section_width = sum(disp_widths) if is_facing else disp_widths[0]
+        # Compute display-box dimensions per page (shared with KFX writer).
+        disp_widths, disp_heights, section_width, section_height = \
+            section_display_box(page_info, page_indices, is_facing)
 
         # --- Section fragment ---
         fragments.append((sid, "blob",

@@ -31,9 +31,9 @@ _ZH = {
     "Gamma correction": "伽马校正",
 
     # config.py — gamma correction labels
-    "Off (keep original)": "关闭(保持原图)",
+    "Off (keep original, default)": "关闭(保持原图,默认)",
     "1.4 (light)": "1.4(轻度)",
-    "1.8 (match Kindle, recommended)": "1.8(匹配 Kindle,推荐)",
+    "1.8 (brighten, match reflowable look)": "1.8(提亮,匹配流式书观感)",
     "2.2 (strong)": "2.2(强)",
 
     # config.py — language labels

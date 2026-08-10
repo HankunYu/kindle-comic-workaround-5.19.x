@@ -5,8 +5,10 @@ Manga/comic to KFX conversion pipeline for Kindle devices.
 Pipeline:
   1. Convert to EPUB if needed (PDF/MOBI/AZW via Calibre's ebook-convert)
   2. Extract images from EPUB in spine reading order
-  3. Generate KPF via custom KPF generator (reverse-engineered format)
-  4. Convert KPF to KFX via Calibre KFX Output plugin
+  3. Generate KFX directly via the self-contained writer (kfx_writer)
+
+Calibre is only required for non-EPUB inputs (ebook-convert); no Calibre
+plugins are needed.
 """
 
 import argparse
@@ -21,7 +23,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from kpf_generator import generate_kpf, DEFAULT_GAMMA
+from kfx_writer import generate_kfx
+from kpf_generator import DEFAULT_GAMMA
 
 # Namespace constants
 NS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container"
@@ -233,22 +236,22 @@ def extract_images(epub_path: str, output_dir: str) -> int:
     return count
 
 
-def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
+def run_kfx_generation(image_dir: str, kfx_path: str, title: str = "",
                        author: str = "", reading_direction: str = "rtl",
                        language: str = "ja", virtual_panels: str = "off",
                        facing_pages: bool = False,
                        facing_start: str = "single",
                        gamma: float = DEFAULT_GAMMA) -> None:
-    """Generate KPF from images using the custom KPF generator."""
+    """Generate KFX from images using the self-contained writer."""
     image_paths = sorted([
         os.path.join(image_dir, f) for f in os.listdir(image_dir)
         if os.path.isfile(os.path.join(image_dir, f))
         and Path(f).suffix.lower() in (".jpg", ".jpeg", ".png")
     ])
 
-    generate_kpf(
+    generate_kfx(
         image_paths=image_paths,
-        output_path=kpf_path,
+        output_path=kfx_path,
         title=title,
         author=author,
         reading_direction=reading_direction,
@@ -258,32 +261,6 @@ def run_kpf_generation(image_dir: str, kpf_path: str, title: str = "",
         facing_start=facing_start,
         gamma=gamma,
     )
-
-
-def run_kfx_conversion(kpf_path: str, kfx_path: str) -> None:
-    """Convert a KPF to KFX using Calibre's KFX Output plugin directly."""
-    calibre = find_calibre_debug()
-    if not calibre:
-        raise FileNotFoundError("calibre-debug not found. Install Calibre from https://calibre-ebook.com/")
-
-    cmd = [
-        calibre,
-        "-r", "KFX Output",
-        "--",
-        kpf_path,
-        kfx_path,
-    ]
-
-    print(f"    Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        print(f"    Calibre stdout: {result.stdout}")
-        print(f"    Calibre stderr: {result.stderr}")
-        raise RuntimeError(f"KFX conversion failed with return code {result.returncode}")
-
-    if not os.path.exists(kfx_path):
-        raise RuntimeError(f"KFX output not found: {kfx_path}")
 
 
 SUPPORTED_FORMATS = (".epub", ".mobi", ".azw", ".azw3", ".pdf")
@@ -350,43 +327,56 @@ def convert_to_kfx(input_path: str, output_dir: str,
         raise FileNotFoundError(f"File not found: {input_path}")
 
     with tempfile.TemporaryDirectory(prefix="kindle-comic-") as tmp_dir:
-        # Convert to EPUB if needed
-        epub_path = convert_to_epub_if_needed(input_path, tmp_dir)
-
         image_dir = os.path.join(tmp_dir, "images")
         os.makedirs(image_dir)
 
-        # Step 1: Extract metadata and images from EPUB
-        print(f"\n[1/3] Extracting from EPUB...")
-        metadata = extract_metadata(epub_path)
+        # Step 1: Extract metadata and images. MOBI-family containers are
+        # read directly (record-level, ~5x faster than the ebook-convert
+        # round trip and byte-faithful); EPUB/PDF go through the EPUB path.
+        print(f"\n[1/2] Extracting images...")
+        metadata = None
+        image_count = 0
+        if Path(input_path).suffix.lower() in (".mobi", ".azw", ".azw3"):
+            try:
+                from mobi_images import extract_images_from_mobi, read_mobi_metadata
+                image_count = extract_images_from_mobi(input_path, image_dir)
+                metadata = read_mobi_metadata(input_path)
+                print(f"    Direct MOBI extraction: {image_count} images")
+            except Exception as e:
+                print(f"    Direct MOBI extraction failed ({e}); "
+                      f"falling back to ebook-convert")
+                for f in os.listdir(image_dir):
+                    os.unlink(os.path.join(image_dir, f))
+                metadata = None
+
+        if metadata is None:
+            epub_path = convert_to_epub_if_needed(input_path, tmp_dir)
+            metadata = extract_metadata(epub_path)
+            image_count = extract_images(epub_path, image_dir)
+            print(f"    Extracted {image_count} images")
+
+        if not metadata.get("title"):
+            metadata["title"] = input_name
         print(f"    Title: {metadata['title']}")
-        if metadata["author"]:
+        if metadata.get("author"):
             print(f"    Author: {metadata['author']}")
-        image_count = extract_images(epub_path, image_dir)
         if image_count == 0:
             raise RuntimeError("No images found in file")
-        print(f"    Extracted {image_count} images")
 
-        # Step 2: Generate KPF
-        kpf_path = os.path.join(tmp_dir, f"{input_name}.kpf")
-        print(f"\n[2/3] Generating KPF...")
+        # Step 2: Generate KFX directly (self-contained writer)
+        print(f"\n[2/2] Generating KFX...")
         if gamma and abs(gamma - 1.0) > 1e-3:
             print(f"    Gamma correction: {gamma}")
-        run_kpf_generation(image_dir, kpf_path,
+        os.makedirs(output_dir, exist_ok=True)
+        run_kfx_generation(image_dir, kfx_output,
                            title=metadata["title"], author=metadata["author"],
                            reading_direction=reading_direction,
                            virtual_panels=virtual_panels,
                            facing_pages=facing_pages,
                            facing_start=facing_start,
                            gamma=gamma)
-        kpf_size = os.path.getsize(kpf_path) / (1024 * 1024)
-        print(f"    KPF: {kpf_size:.1f} MB")
-
-        # Step 3: Convert KPF to KFX
-        print(f"\n[3/3] Converting KPF to KFX...")
-        os.makedirs(output_dir, exist_ok=True)
-        run_kfx_conversion(kpf_path, kfx_output)
-        print(f"    Output: {kfx_output}")
+        kfx_size = os.path.getsize(kfx_output) / (1024 * 1024)
+        print(f"    Output: {kfx_output} ({kfx_size:.1f} MB)")
 
     print(f"\nDone: {kfx_output}")
 

@@ -78,6 +78,11 @@ class KFXComicAction(InterfaceAction):
             action.triggered.connect(lambda checked, k=key: self._set_facing_start(k))
             self._fs_actions[key] = action
 
+        # Table of contents toggle (MOBI/AZW/AZW3 sources)
+        self._toc_action = self._menu.addAction(T("Keep table of contents"))
+        self._toc_action.setCheckable(True)
+        self._toc_action.triggered.connect(self._toggle_keep_toc)
+
         # Gamma correction submenu
         from calibre_plugins.kfx_comic_output.config import GAMMA_CORRECTION
         self._gamma_menu = self._menu.addMenu(T("Gamma correction"))
@@ -125,6 +130,13 @@ class KFXComicAction(InterfaceAction):
         prefs.commit()
         self._update_checks()
 
+    def _toggle_keep_toc(self):
+        from calibre_plugins.kfx_comic_output.config import get_prefs
+        prefs = get_prefs()
+        prefs["keep_toc"] = not prefs.get("keep_toc", True)
+        prefs.commit()
+        self._update_checks()
+
     def _set_virtual_panels(self, mode):
         from calibre_plugins.kfx_comic_output.config import get_prefs
         prefs = get_prefs()
@@ -160,6 +172,7 @@ class KFXComicAction(InterfaceAction):
         self._rtl_action.setChecked(is_rtl)
         self._ltr_action.setChecked(not is_rtl)
         self._facing_action.setChecked(prefs.get("facing_pages", False))
+        self._toc_action.setChecked(prefs.get("keep_toc", True))
         current_vp = prefs["virtual_panels"]
         for key, action in self._vp_actions.items():
             action.setChecked(key == current_vp)

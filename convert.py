@@ -241,7 +241,8 @@ def run_kfx_generation(image_dir: str, kfx_path: str, title: str = "",
                        language: str = "ja", virtual_panels: str = "off",
                        facing_pages: bool = False,
                        facing_start: str = "single",
-                       gamma: float = DEFAULT_GAMMA) -> None:
+                       gamma: float = DEFAULT_GAMMA,
+                       toc: list[dict] | None = None) -> None:
     """Generate KFX from images using the self-contained writer."""
     image_paths = sorted([
         os.path.join(image_dir, f) for f in os.listdir(image_dir)
@@ -260,6 +261,7 @@ def run_kfx_generation(image_dir: str, kfx_path: str, title: str = "",
         facing_pages=facing_pages,
         facing_start=facing_start,
         gamma=gamma,
+        toc=toc,
     )
 
 
@@ -302,7 +304,8 @@ def convert_to_kfx(input_path: str, output_dir: str,
                    virtual_panels: str = "off",
                    facing_pages: bool = False,
                    facing_start: str = "single",
-                   gamma: float = DEFAULT_GAMMA) -> None:
+                   gamma: float = DEFAULT_GAMMA,
+                   keep_toc: bool = True) -> None:
     """
     Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
 
@@ -314,6 +317,7 @@ def convert_to_kfx(input_path: str, output_dir: str,
         facing_pages: Enable facing pages (spreads) for landscape viewing.
         facing_start: "single" (default) keeps page 1 solo, "double" pairs from page 1.
         gamma: Display-gamma compensation for Kindle e-ink; 1.0 disables.
+        keep_toc: Carry the source's table of contents over (MOBI/AZW/AZW3).
     """
     input_name = Path(input_path).stem
     kfx_output = os.path.join(output_dir, f"{input_name}.kfx")
@@ -336,12 +340,21 @@ def convert_to_kfx(input_path: str, output_dir: str,
         print(f"\n[1/2] Extracting images...")
         metadata = None
         image_count = 0
+        toc = None
         if Path(input_path).suffix.lower() in (".mobi", ".azw", ".azw3"):
             try:
-                from mobi_images import extract_images_from_mobi, read_mobi_metadata
+                from mobi_images import (extract_images_from_mobi,
+                                         read_mobi_metadata, read_mobi_toc)
                 image_count = extract_images_from_mobi(input_path, image_dir)
                 metadata = read_mobi_metadata(input_path)
                 print(f"    Direct MOBI extraction: {image_count} images")
+                if keep_toc:
+                    try:
+                        toc = read_mobi_toc(input_path)
+                        if toc:
+                            print(f"    Table of contents: {len(toc)} top-level entries")
+                    except Exception as e:
+                        print(f"    Table of contents unreadable ({e}); skipped")
             except Exception as e:
                 print(f"    Direct MOBI extraction failed ({e}); "
                       f"falling back to ebook-convert")
@@ -374,7 +387,8 @@ def convert_to_kfx(input_path: str, output_dir: str,
                            virtual_panels=virtual_panels,
                            facing_pages=facing_pages,
                            facing_start=facing_start,
-                           gamma=gamma)
+                           gamma=gamma,
+                           toc=toc)
         kfx_size = os.path.getsize(kfx_output) / (1024 * 1024)
         print(f"    Output: {kfx_output} ({kfx_size:.1f} MB)")
 
@@ -424,6 +438,12 @@ def main() -> None:
              f"Use 1.0 to keep original image bytes untouched (default: {DEFAULT_GAMMA})",
     )
     parser.add_argument(
+        "--no-toc",
+        action="store_true",
+        help="Don't carry the source's table of contents over to the KFX "
+             "(MOBI/AZW/AZW3 input; page-number-only TOCs are always skipped)",
+    )
+    parser.add_argument(
         "input_files",
         nargs="+",
         metavar="file",
@@ -450,7 +470,8 @@ def main() -> None:
         try:
             convert_to_kfx(input_file, args.output, args.direction,
                           args.virtual_panels, args.facing_pages,
-                          args.facing_start, args.gamma)
+                          args.facing_start, args.gamma,
+                          keep_toc=not args.no_toc)
             success_count += 1
         except Exception as e:
             print(f"\nError processing {input_file}: {e}")

@@ -9,6 +9,7 @@ DEFAULTS = {
     "facing_pages": False,
     "facing_start": "single",
     "gamma": 1.0,
+    "keep_toc": True,
 }
 
 LANGUAGES = {

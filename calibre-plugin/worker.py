@@ -295,6 +295,7 @@ def convert_book(book_info, log=None):
     virtual_panels = prefs.get("virtual_panels", "off")
     facing_pages = prefs.get("facing_pages", False)
     facing_start = prefs.get("facing_start", "single")
+    keep_toc = prefs.get("keep_toc", True)
     try:
         gamma = float(prefs.get("gamma", 1.0))
     except (TypeError, ValueError):
@@ -320,16 +321,27 @@ def convert_book(book_info, log=None):
             log.info(f"KFX Comic: Extracting images from {source_fmt}...")
 
         epub_path = source_path
+        toc = None
         if source_fmt in ("MOBI", "AZW", "AZW3"):
             # Fast path: read page images straight out of the MOBI records
             # (~5x faster than the ebook-convert round trip, byte-faithful).
             try:
                 from calibre_plugins.kfx_comic_output.mobi_images import (
-                    extract_images_from_mobi)
+                    extract_images_from_mobi, read_mobi_toc)
                 image_count = extract_images_from_mobi(source_path, image_dir)
                 if log:
                     log.info(f"KFX Comic: Direct MOBI extraction: {image_count} images")
                 source_fmt = "_DONE"
+                if keep_toc:
+                    try:
+                        toc = read_mobi_toc(source_path)
+                        if log and toc:
+                            log.info(f"KFX Comic: Table of contents: "
+                                     f"{len(toc)} top-level entries")
+                    except Exception as e:
+                        if log:
+                            log.warn(f"KFX Comic: Table of contents "
+                                     f"unreadable ({e}); skipped")
             except Exception as e:
                 if log:
                     log.warn(f"KFX Comic: Direct MOBI extraction failed ({e}); "
@@ -405,6 +417,7 @@ def convert_book(book_info, log=None):
             facing_pages=facing_pages,
             facing_start=facing_start,
             gamma=gamma,
+            toc=toc,
         )
 
         if log:

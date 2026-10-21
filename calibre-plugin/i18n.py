@@ -29,6 +29,7 @@ _ZH = {
     "Start with double page": "首页直接配对",
     "Language": "语言",
     "Gamma correction": "伽马校正",
+    "Keep table of contents": "保留目录",
 
     # config.py — gamma correction labels
     "Off (keep original, default)": "关闭(保持原图,默认)",

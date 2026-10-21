@@ -30,6 +30,10 @@ Typical conversion takes well under a second per volume: MOBI page images are re
 
 单卷转换通常不到一秒：MOBI 页面图片直接按 record 层读取（无格式往返），KFX 容器单趟写出。
 
+The table of contents of MOBI/AZW/AZW3 sources (including nested volume/chapter entries) is carried over into the KFX, so the Kindle's "Go To" menu lists the same entries as the original book. Page-number-only TOCs (one "page N" entry per page, common in Kmoe MOBIs) are recognized and skipped, and files without a TOC get none. Turn it off with **Keep table of contents** in the plugin menu or `--no-toc` on the CLI.
+
+MOBI/AZW/AZW3 源文件的目录（包括卷/话多级目录）会保留到 KFX 中，Kindle 的“前往”菜单会显示与原书一致的目录。只有页码的目录（每页一条“第 N 頁”，Kmoe 的 MOBI 常见）会被自动识别并跳过，源文件没有目录时也不会额外添加。可在插件菜单取消勾选 **保留目录**，或在 CLI 使用 `--no-toc` 关闭。
+
 ## Requirements / 依赖
 
 - Calibre plugin: just [Calibre](https://calibre-ebook.com/) — nothing else
@@ -73,6 +77,7 @@ Then:
    - **Virtual panels**: Off / Horizontal / Vertical (guided panel navigation)
    - **Facing pages**: Enable spread view for landscape reading
    - **Facing pages start**: Single (cover solo, then 2+3, 4+5...) / Double (1+2, 3+4...)
+   - **Keep table of contents**: On (default) — carry the MOBI/AZW/AZW3 source's TOC over to the KFX; page-number-only TOCs are skipped automatically
    - **Gamma correction**: Off (default) / 1.4 / 1.8 / 2.2 — Kindle firmware renders fixed-layout comics through a darker tone path than reflowable books; 1.8 brightens midtones to compensate. Off keeps original image bytes untouched
    - **Language**: Japanese / Chinese / Korean / English
 
@@ -84,6 +89,7 @@ Then:
    - **虚拟面板**：关闭 / 水平 / 垂直（引导式面板导航）
    - **对开页**：启用横屏双页显示
    - **对开页起始**：首页单独（封面单独，再 2+3、4+5…配对）/ 首页直接配对（1+2、3+4…）
+   - **保留目录**：开启（默认）——将 MOBI/AZW/AZW3 源文件的目录带入 KFX；只有页码的目录会被自动跳过
    - **伽马校正**：关闭（默认）/ 1.4 / 1.8 / 2.2 —— Kindle 固件渲染固定版式漫画的色调比流式书更深，1.8 通过提亮中间调补偿；关闭则保持原始图片字节不变
    - **语言**：日语 / 中文 / 韩语 / 英语
 
@@ -111,6 +117,9 @@ python convert.py --facing-pages --facing-start double manga.epub
 # Virtual panel navigation / 虚拟面板导航
 python convert.py --virtual-panels horizontal manga.epub
 
+# Don't carry the source's table of contents over / 不保留源文件目录
+python convert.py --no-toc manga.azw3
+
 # Enable gamma brightening for the Kindle comic rendering path (off by default)
 # 启用伽马提亮补偿 Kindle 漫画渲染路径（默认关闭）
 python convert.py --gamma 1.8 manga.epub
@@ -131,12 +140,14 @@ Copy the `.kfx` file to your Kindle's `documents` folder via USB, or use Calibre
 ## How It Works / 工作原理
 
 1. **Extract images** in reading order — MOBI/AZW page images are read directly out of the PalmDB records (cover reordered to front, thumbnail record skipped); EPUB is parsed via its spine; PDF goes through Calibre's ebook-convert
-2. **Generate KFX directly** with a self-contained writer: it builds the Kindle YJ fragment structures (sections, storylines, position maps, metadata) and serializes them into a single KFX container — byte-for-byte equivalent to the output of the Kindle Create → KFX Output plugin toolchain, verified fragment by fragment
+2. **Read the table of contents** (MOBI/AZW/AZW3) from the NCX index — HUFF/CDIC and PalmDOC text is decompressed in-process — and map each entry to the page image it points at; page-number-only TOCs are discarded
+3. **Generate KFX directly** with a self-contained writer: it builds the Kindle YJ fragment structures (sections, storylines, position maps, navigation, metadata) and serializes them into a single KFX container — byte-for-byte equivalent to the output of the Kindle Create → KFX Output plugin toolchain, verified fragment by fragment
 
 ---
 
 1. 按阅读顺序**提取图片**——MOBI/AZW 直接从 PalmDB record 中读取页面图片（封面重排到最前，跳过缩略图记录）；EPUB 按 spine 解析；PDF 走 Calibre 的 ebook-convert
-2. 使用自研序列化器**直接生成 KFX**：构造 Kindle YJ fragment 结构（章节、故事线、位置映射、元数据）并序列化为单容器 KFX——与 Kindle Create → KFX Output 插件工具链的产物逐字节等价（已逐 fragment 验证）
+2. **读取目录**（MOBI/AZW/AZW3）：解析 NCX 索引（进程内解压 HUFF/CDIC 与 PalmDOC 文本），将每个目录项映射到其指向的页面图片；只有页码的目录会被丢弃
+3. 使用自研序列化器**直接生成 KFX**：构造 Kindle YJ fragment 结构（章节、故事线、位置映射、导航、元数据）并序列化为单容器 KFX——与 Kindle Create → KFX Output 插件工具链的产物逐字节等价（已逐 fragment 验证）
 
 ## License / 许可证
 

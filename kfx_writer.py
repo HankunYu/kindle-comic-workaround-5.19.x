@@ -95,7 +95,15 @@ SYM_POSITION_EID_MAP = 265    # $265
 SYM_NAV_CONTAINERS = 392      # $392
 SYM_BOOK_NAVIGATION = 389     # $389
 SYM_NAV_395 = 395             # $395
-SYM_NAV_UNITS = 247           # $247
+SYM_NAV_UNITS = 247           # $247 (also a nav unit's nested entries)
+SYM_NAV_CONTAINER = 391       # $391 (nav_container annotation)
+SYM_NAV_UNIT = 393            # $393 (nav_unit annotation)
+SYM_NAV_TYPE = 235            # $235
+SYM_NAV_TYPE_TOC = 212        # $212
+SYM_NAV_CONTAINER_NAME = 239  # $239
+SYM_NAV_REPRESENTATION = 241  # $241
+SYM_NAV_LABEL = 244           # $244
+SYM_NAV_TARGET = 246          # $246
 SYM_SINGLETON = 348           # $348 (entity id for unnamed fragments)
 SYM_EXTERNAL_RESOURCE_FRAG = 164  # $164
 SYM_RAW_MEDIA = 417           # $417
@@ -127,6 +135,9 @@ LOCAL_SID_BASE = 852
 
 CONTAINER_VERSION = 2
 CHUNK_SIZE = 4096
+
+# Local symbol naming the table-of-contents nav container
+TOC_NAV_CONTAINER_NAME = "toc"
 
 _ID_ALPHABET = string.ascii_uppercase + string.digits
 
@@ -341,10 +352,53 @@ def _build_document_data(syms: _LocalSymbols, sections: list[dict],
     ])
 
 
-def _build_book_navigation() -> bytes:
+def _build_toc_container(syms: _LocalSymbols, sections: list[dict],
+                         toc: list[dict]) -> bytes | None:
+    """Build the TOC nav container, or None when no entry is usable.
+
+    Each entry targets the start of the section showing its page, so an
+    entry on the second page of a spread opens the whole spread.
+    Entries whose page is out of range are dropped (children kept).
+    """
+    section_of_page = {p: sec for sec in sections for p in sec["page_indices"]}
+
+    def units(entries: list[dict]) -> list[bytes]:
+        out = []
+        for entry in entries:
+            children = units(entry.get("children", []))
+            sec = section_of_page.get(entry["page"])
+            if sec is None:
+                out.extend(children)
+                continue
+            fields = [
+                (SYM_NAV_REPRESENTATION, ion_struct([
+                    (SYM_NAV_LABEL, ion_string(entry["title"]))])),
+                (SYM_NAV_TARGET, ion_struct([
+                    (SYM_ELEMENT_TYPE_155, ion_int(sec["struct_eid"])),
+                    (SYM_OFFSET, ion_int(0)),
+                ])),
+            ]
+            if children:
+                fields.append((SYM_NAV_UNITS, ion_list(children)))
+            out.append(ion_annotation([SYM_NAV_UNIT], ion_struct(fields)))
+        return out
+
+    entries = units(toc)
+    if not entries:
+        return None
+    return ion_annotation([SYM_NAV_CONTAINER], ion_struct([
+        (SYM_NAV_TYPE, ion_symbol(SYM_NAV_TYPE_TOC)),
+        (SYM_NAV_CONTAINER_NAME,
+         ion_symbol(syms.sid(TOC_NAV_CONTAINER_NAME))),
+        (SYM_NAV_UNITS, ion_list(entries)),
+    ]))
+
+
+def _build_book_navigation(toc_container: bytes | None) -> bytes:
+    containers = [toc_container] if toc_container is not None else []
     return ion_list([ion_struct([
         (SYM_READING_ORDER_NAME, ion_symbol(SYM_DEFAULT)),
-        (SYM_NAV_CONTAINERS, ion_list([])),
+        (SYM_NAV_CONTAINERS, ion_list(containers)),
     ])])
 
 
@@ -628,6 +682,7 @@ def generate_kfx(image_paths: list[str], output_path: str, title: str = "",
                  language: str = "en-US", virtual_panels: str = "off",
                  facing_pages: bool = False, facing_start: str = "single",
                  gamma: float = DEFAULT_GAMMA,
+                 toc: list[dict] | None = None,
                  book_id: str | None = None, asin: str | None = None,
                  container_id: str | None = None) -> None:
     """Generate a single-container KFX file from a list of images.
@@ -635,6 +690,11 @@ def generate_kfx(image_paths: list[str], output_path: str, title: str = "",
     Mirrors generate_kpf's interface. title/author are accepted for
     interface parity; like the plugin conversion path, they are not
     embedded (Calibre or the device library supplies display metadata).
+
+    toc is an optional table of contents: a tree of
+    {"title": str, "page": int, "children": [...]} where page is a
+    0-based index into image_paths (see mobi_images.read_mobi_toc).
+
     The book_id/asin/container_id overrides exist for reproducible tests.
     """
     if not image_paths:
@@ -646,20 +706,22 @@ def generate_kfx(image_paths: list[str], output_path: str, title: str = "",
             corrected = gamma_correct_batch(image_paths, gamma, gamma_dir)
             _generate_kfx_impl(corrected, output_path, reading_direction,
                                language, virtual_panels, facing_pages,
-                               facing_start, book_id, asin, container_id)
+                               facing_start, toc, book_id, asin,
+                               container_id)
         finally:
             shutil.rmtree(gamma_dir, ignore_errors=True)
     else:
         _generate_kfx_impl(image_paths, output_path, reading_direction,
                            language, virtual_panels, facing_pages,
-                           facing_start, book_id, asin, container_id)
+                           facing_start, toc, book_id, asin, container_id)
 
 
 def _generate_kfx_impl(image_paths: list[str], output_path: str,
                        reading_direction: str, language: str,
                        virtual_panels: str, facing_pages: bool,
-                       facing_start: str, book_id: str | None,
-                       asin: str | None, container_id: str | None) -> None:
+                       facing_start: str, toc: list[dict] | None,
+                       book_id: str | None, asin: str | None,
+                       container_id: str | None) -> None:
     import uuid
 
     page_info = read_page_info(image_paths)
@@ -679,6 +741,9 @@ def _generate_kfx_impl(image_paths: list[str], output_path: str,
     syms = _LocalSymbols()
     for name in sorted(all_names, key=_natural_key):
         syms.sid(name)
+    # Registered after the entity names (only when a TOC is present, so
+    # books without one stay byte-identical to plugin output)
+    toc_container = _build_toc_container(syms, sections, toc or [])
 
     # Same id-count formula as the KPF generator's IdAllocator total:
     # d0 + (c,t,l) per section + (i,i,e,rsrc,d) per image.
@@ -701,7 +766,8 @@ def _generate_kfx_impl(image_paths: list[str], output_path: str,
     add(SYM_SINGLETON, SYM_DOCUMENT_DATA_FRAG,
         _build_document_data(syms, sections, max_eid, reading_direction,
                              virtual_panels))
-    add(SYM_SINGLETON, SYM_BOOK_NAVIGATION, _build_book_navigation())
+    add(SYM_SINGLETON, SYM_BOOK_NAVIGATION,
+        _build_book_navigation(toc_container))
 
     # Within each per-name entity block the plugin emits fragments in
     # plain ASCII order of their ids (the order it reads them back from

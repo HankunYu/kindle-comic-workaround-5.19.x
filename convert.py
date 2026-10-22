@@ -3,12 +3,13 @@
 Manga/comic to KFX conversion pipeline for Kindle devices.
 
 Pipeline:
-  1. Convert to EPUB if needed (PDF/MOBI/AZW via Calibre's ebook-convert)
-  2. Extract images from EPUB in spine reading order
-  3. Generate KFX directly via the self-contained writer (kfx_writer)
+  1. Extract page images: MOBI/AZW/AZW3 and comic archives (ZIP/CBZ,
+     RAR/CBR, 7z/CB7) directly; EPUB in spine reading order; PDF (and
+     unusual MOBIs) via Calibre's ebook-convert to EPUB first
+  2. Generate KFX directly via the self-contained writer (kfx_writer)
 
-Calibre is only required for non-EPUB inputs (ebook-convert); no Calibre
-plugins are needed.
+Calibre is only required for PDF input and the MOBI fallback
+(ebook-convert); no Calibre plugins are needed.
 """
 
 import argparse
@@ -23,6 +24,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from archive_images import ARCHIVE_EXTS, open_archive
 from kfx_writer import generate_kfx
 from kpf_generator import DEFAULT_GAMMA
 
@@ -265,7 +267,8 @@ def run_kfx_generation(image_dir: str, kfx_path: str, title: str = "",
     )
 
 
-SUPPORTED_FORMATS = (".epub", ".mobi", ".azw", ".azw3", ".pdf")
+MOBI_EXTS = (".mobi", ".azw", ".azw3")
+SUPPORTED_FORMATS = (".epub", *MOBI_EXTS, ".pdf", *ARCHIVE_EXTS)
 
 
 def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
@@ -276,7 +279,9 @@ def convert_to_epub_if_needed(input_path: str, tmp_dir: str) -> str:
 
     calibre_convert = find_calibre_debug()
     if not calibre_convert:
-        raise FileNotFoundError("calibre-debug not found")
+        raise FileNotFoundError(
+            f"calibre-debug not found; {ext} input needs Calibre "
+            f"(https://calibre-ebook.com/)")
 
     # Use ebook-convert (same directory as calibre-debug)
     convert_bin = str(Path(calibre_convert).parent / "ebook-convert")
@@ -307,10 +312,11 @@ def convert_to_kfx(input_path: str, output_dir: str,
                    gamma: float = DEFAULT_GAMMA,
                    keep_toc: bool = True) -> None:
     """
-    Full pipeline: EPUB/MOBI -> extract images -> KPF -> KFX.
+    Full pipeline: EPUB/MOBI/archive -> extract images -> KFX.
 
     Args:
-        input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3, PDF).
+        input_path: Path to the source manga file (EPUB, MOBI, AZW, AZW3,
+            PDF, or a ZIP/CBZ/RAR/CBR/7Z/CB7 comic archive).
         output_dir: Directory where the final KFX file will be placed.
         reading_direction: "rtl" for right-to-left, "ltr" for left-to-right.
         virtual_panels: "off", "horizontal", or "vertical".
@@ -334,14 +340,20 @@ def convert_to_kfx(input_path: str, output_dir: str,
         image_dir = os.path.join(tmp_dir, "images")
         os.makedirs(image_dir)
 
-        # Step 1: Extract metadata and images. MOBI-family containers are
-        # read directly (record-level, ~5x faster than the ebook-convert
-        # round trip and byte-faithful); EPUB/PDF go through the EPUB path.
+        # Step 1: Extract metadata and images. MOBI-family containers and
+        # comic archives are read directly (byte-faithful, no ebook-convert
+        # round trip); EPUB/PDF go through the EPUB path.
         print(f"\n[1/2] Extracting images...")
         metadata = None
         image_count = 0
         toc = None
-        if Path(input_path).suffix.lower() in (".mobi", ".azw", ".azw3"):
+        suffix = Path(input_path).suffix.lower()
+        if suffix in ARCHIVE_EXTS:
+            with open_archive(input_path) as archive:
+                image_count = archive.extract_images(image_dir)
+                metadata = archive.read_metadata()
+            print(f"    Archive extraction: {image_count} images")
+        elif suffix in MOBI_EXTS:
             try:
                 from mobi_images import (extract_images_from_mobi,
                                          read_mobi_metadata, read_mobi_toc)
@@ -447,16 +459,11 @@ def main() -> None:
         "input_files",
         nargs="+",
         metavar="file",
-        help="One or more EPUB/MOBI/AZW/AZW3/PDF files to convert",
+        help="One or more EPUB/MOBI/AZW/AZW3/PDF files or "
+             "ZIP/CBZ/RAR/CBR/7Z/CB7 comic archives to convert",
     )
 
     args = parser.parse_args()
-
-    calibre = find_calibre_debug()
-    if not calibre:
-        print("Error: calibre-debug not found. Install Calibre from https://calibre-ebook.com/")
-        sys.exit(1)
-    print(f"Calibre: {calibre}")
 
     success_count = 0
     fail_count = 0

@@ -1,7 +1,8 @@
 """
 Background conversion worker for KFX Comic Output plugin.
 
-Handles the full pipeline: extract images from EPUB/CBZ/PDF -> generate KPF -> convert to KFX.
+Handles the full pipeline: extract images from EPUB/MOBI/PDF or a comic
+archive (CBZ/CBR/CB7/ZIP/RAR/7Z) -> generate KFX.
 """
 
 import os
@@ -219,37 +220,6 @@ def _extract_images_from_epub(epub_path, output_dir):
     return count
 
 
-def _extract_images_from_cbz(cbz_path, output_dir):
-    """
-    Extract images from a CBZ file (ZIP of images) in sorted order.
-    Returns the number of images extracted.
-    """
-    image_exts = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    count = 0
-
-    with zipfile.ZipFile(cbz_path, "r") as zf:
-        entries = sorted(
-            [n for n in zf.namelist()
-             if Path(n).suffix.lower() in image_exts
-             and not Path(n).name.startswith(".")],
-        )
-
-        for entry in entries:
-            ext = Path(entry).suffix.lower()
-            if ext == ".jpeg":
-                ext = ".jpg"
-
-            count += 1
-            seq_name = f"{count:04d}{ext}"
-            image_data = zf.read(entry)
-
-            out_path = os.path.join(output_dir, seq_name)
-            with open(out_path, "wb") as f:
-                f.write(image_data)
-
-    return count
-
-
 def _extract_metadata_from_epub(epub_path):
     """Extract title and author from EPUB metadata."""
     metadata = {"title": Path(epub_path).stem, "author": ""}
@@ -276,9 +246,14 @@ def _extract_metadata_from_epub(epub_path):
 # Main conversion pipeline
 # ============================================================================
 
+# Calibre format names of comic archives (Calibre stores image-only
+# archives as CBZ/CBR/CB7, but plain ZIP/RAR/7Z entries can exist too)
+ARCHIVE_FORMATS = ("CBZ", "CBR", "CB7", "ZIP", "RAR", "7Z")
+
+
 def convert_book(book_info, log=None):
     """
-    Convert a single book from EPUB/CBZ to KFX.
+    Convert a single book from EPUB/MOBI/PDF or a comic archive to KFX.
 
     Args:
         book_info: Dict with keys: book_id, title, author, source_path, source_fmt
@@ -381,8 +356,16 @@ def convert_book(book_info, log=None):
             if not author:
                 author = epub_meta["author"]
             image_count = _extract_images_from_epub(epub_path, image_dir)
-        elif source_fmt == "CBZ":
-            image_count = _extract_images_from_cbz(source_path, image_dir)
+        elif source_fmt in ARCHIVE_FORMATS:
+            from calibre_plugins.kfx_comic_output.archive_images import (
+                open_archive)
+            with open_archive(source_path) as archive:
+                image_count = archive.extract_images(image_dir)
+                archive_meta = archive.read_metadata()
+            if (not title or title == "Unknown") and archive_meta["title"]:
+                title = archive_meta["title"]
+            if not author:
+                author = archive_meta["author"]
         else:
             raise ValueError(f"Unsupported format: {source_fmt}")
 

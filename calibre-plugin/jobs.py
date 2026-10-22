@@ -50,7 +50,8 @@ def start_conversion(gui):
 
         # Find a suitable source format (prefer EPUB, then others)
         source_fmt = None
-        for fmt in ("EPUB", "MOBI", "AZW", "AZW3", "CBZ", "PDF"):
+        for fmt in ("EPUB", "MOBI", "AZW", "AZW3",
+                    "CBZ", "CBR", "CB7", "ZIP", "RAR", "7Z", "PDF"):
             if fmt in formats:
                 source_fmt = fmt
                 break

@@ -4,7 +4,7 @@ from calibre.customize import InterfaceActionBase
 # Single source of truth for the plugin version. Both the class attribute
 # below and updater.py read from this constant, so bumping the version
 # here is enough — no other file needs to change.
-__plugin_version__ = (1, 3, 0)
+__plugin_version__ = (1, 3, 1)
 
 
 class KFXComicOutputPlugin(InterfaceActionBase):
@@ -12,7 +12,7 @@ class KFXComicOutputPlugin(InterfaceActionBase):
     Calibre plugin that adds a toolbar button for converting manga/comic
     files to KFX format optimized for Kindle e-readers.
 
-    Pipeline: EPUB/MOBI → extract images → generate KPF → convert to KFX
+    Pipeline: EPUB/MOBI/comic archive → extract images → generate KFX
     """
 
     name = "KFX Comic Output"

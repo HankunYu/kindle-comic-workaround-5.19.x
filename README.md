@@ -18,12 +18,12 @@ Since Kindle firmware 5.19.2, sideloaded manga and comics have display issues:
 
 ## Solution / 解决方案
 
-Convert manga/comic files (EPUB, MOBI, AZW, AZW3, PDF) to KFX format via a fully self-contained, reverse-engineered KFX writer — no Kindle Previewer, no third-party Calibre plugins. KFX is Kindle's native format and renders comics correctly without the issues above.
+Convert manga/comic files (EPUB, MOBI, AZW, AZW3, PDF, and ZIP/CBZ, RAR/CBR, 7z/CB7 comic archives) to KFX format via a fully self-contained, reverse-engineered KFX writer — no Kindle Previewer, no third-party Calibre plugins. KFX is Kindle's native format and renders comics correctly without the issues above.
 
-将漫画文件（EPUB、MOBI、AZW、AZW3、PDF）通过完全自研的逆向工程 KFX 生成器转换为 KFX 格式——不依赖 Kindle Previewer，也不依赖任何第三方 Calibre 插件。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
+将漫画文件（EPUB、MOBI、AZW、AZW3、PDF，以及 ZIP/CBZ、RAR/CBR、7z/CB7 漫画压缩包）通过完全自研的逆向工程 KFX 生成器转换为 KFX 格式——不依赖 Kindle Previewer，也不依赖任何第三方 Calibre 插件。KFX 是 Kindle 的原生格式，能正确渲染漫画，不会出现上述问题。
 
 ```
-EPUB/MOBI/AZW/PDF → Extract images → Generate KFX
+EPUB/MOBI/AZW/PDF/CBZ/CBR/CB7 → Extract images → Generate KFX
 ```
 
 Typical conversion takes well under a second per volume: MOBI page images are read directly at the record level (no format round trip), and the KFX container is written in a single pass.
@@ -40,14 +40,16 @@ MOBI/AZW/AZW3 源文件的目录（包括卷/话多级目录）会保留到 KFX 
 - CLI:
   - Python 3.10+
   - [Pillow](https://pypi.org/project/Pillow/) (`pip install -r requirements.txt`)
-  - Calibre is only needed for PDF input (and as a fallback for unusual MOBI files); EPUB/MOBI/AZW input needs no Calibre at all
+  - Calibre is only needed for PDF input (and as a fallback for unusual MOBI files); EPUB/MOBI/AZW and ZIP/CBZ input needs no Calibre at all
+  - RAR/CBR input needs one of `unrar`, `7z` or `bsdtar`; 7z/CB7 input needs [py7zr](https://pypi.org/project/py7zr/) or one of `7z` / `bsdtar` (the Calibre plugin has all of this built in)
 
 依赖说明：
 - Calibre 插件：只需要 [Calibre](https://calibre-ebook.com/) 本体，无需其他插件
 - CLI 工具：
   - Python 3.10+
   - [Pillow](https://pypi.org/project/Pillow/)（`pip install -r requirements.txt`）
-  - 仅 PDF 输入需要 Calibre（非常规 MOBI 会回退到 `ebook-convert`）；EPUB/MOBI/AZW 输入完全不需要 Calibre
+  - 仅 PDF 输入需要 Calibre（非常规 MOBI 会回退到 `ebook-convert`）；EPUB/MOBI/AZW 与 ZIP/CBZ 输入完全不需要 Calibre
+  - RAR/CBR 输入需要 `unrar`、`7z`、`bsdtar` 之一；7z/CB7 输入需要 [py7zr](https://pypi.org/project/py7zr/) 或 `7z` / `bsdtar` 之一（Calibre 插件已内置，无需额外安装）
 
 ## Usage / 使用方法
 
@@ -105,6 +107,9 @@ python convert.py manga.mobi
 # PDF
 python convert.py manga.pdf
 
+# Comic archives / 漫画压缩包 (ZIP/CBZ, RAR/CBR, 7z/CB7)
+python convert.py manga.cbz manga.zip manga.cbr manga.cb7
+
 # Left to right reading direction / 从左到右阅读
 python convert.py --direction ltr comic.epub
 
@@ -125,7 +130,7 @@ python convert.py --no-toc manga.azw3
 python convert.py --gamma 1.8 manga.epub
 
 # Multiple files / 批量转换
-python convert.py *.epub *.mobi *.pdf
+python convert.py *.epub *.mobi *.pdf *.cbz
 
 # Specify output directory / 指定输出目录
 python convert.py -o output/ manga.epub
@@ -139,13 +144,13 @@ Copy the `.kfx` file to your Kindle's `documents` folder via USB, or use Calibre
 
 ## How It Works / 工作原理
 
-1. **Extract images** in reading order — MOBI/AZW page images are read directly out of the PalmDB records (cover reordered to front, thumbnail record skipped); EPUB is parsed via its spine; PDF goes through Calibre's ebook-convert
+1. **Extract images** in reading order — MOBI/AZW page images are read directly out of the PalmDB records (cover reordered to front, thumbnail record skipped); EPUB is parsed via its spine; comic archives (ZIP/CBZ, RAR/CBR, 7z/CB7) are read in natural filename order (`2.jpg` before `10.jpg`, folder by folder) with JPEG/PNG pages passed through untouched, other image formats (WebP, GIF, …) re-encoded to high-quality JPEG, and title/author taken from `ComicInfo.xml` when present; PDF goes through Calibre's ebook-convert
 2. **Read the table of contents** (MOBI/AZW/AZW3) from the NCX index — HUFF/CDIC and PalmDOC text is decompressed in-process — and map each entry to the page image it points at; page-number-only TOCs are discarded
 3. **Generate KFX directly** with a self-contained writer: it builds the Kindle YJ fragment structures (sections, storylines, position maps, navigation, metadata) and serializes them into a single KFX container — byte-for-byte equivalent to the output of the Kindle Create → KFX Output plugin toolchain, verified fragment by fragment
 
 ---
 
-1. 按阅读顺序**提取图片**——MOBI/AZW 直接从 PalmDB record 中读取页面图片（封面重排到最前，跳过缩略图记录）；EPUB 按 spine 解析；PDF 走 Calibre 的 ebook-convert
+1. 按阅读顺序**提取图片**——MOBI/AZW 直接从 PalmDB record 中读取页面图片（封面重排到最前，跳过缩略图记录）；EPUB 按 spine 解析；漫画压缩包（ZIP/CBZ、RAR/CBR、7z/CB7）按文件名自然排序读取（`2.jpg` 排在 `10.jpg` 之前，逐个文件夹），JPEG/PNG 原样保留，其它格式（WebP、GIF 等）以高质量 JPEG 重新编码，存在 `ComicInfo.xml` 时从中读取标题/作者；PDF 走 Calibre 的 ebook-convert
 2. **读取目录**（MOBI/AZW/AZW3）：解析 NCX 索引（进程内解压 HUFF/CDIC 与 PalmDOC 文本），将每个目录项映射到其指向的页面图片；只有页码的目录会被丢弃
 3. 使用自研序列化器**直接生成 KFX**：构造 Kindle YJ fragment 结构（章节、故事线、位置映射、导航、元数据）并序列化为单容器 KFX——与 Kindle Create → KFX Output 插件工具链的产物逐字节等价（已逐 fragment 验证）
 
